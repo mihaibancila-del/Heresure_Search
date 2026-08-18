@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}Import settings — Agents_Heresure{% endblock %}
+{% block styles %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/imports.css') }}">
+{% endblock %}
+
+{% block content %}
+<header>
+  <h1>Import settings</h1>
+  <div class="meta">
+    What gets imported, and when. Changes apply to the <em>next</em> import — they
+    never alter rows already in the table.
+    {% if settings.updated_by %}
+      Last changed by {{ settings.updated_by }} on
+      {{ settings.updated_at.strftime('%Y-%m-%d %H:%M') }}.
+    {% endif %}
+  </div>
+</header>
+
+<section class="panel">
+  <h2>Filters</h2>
+  <p class="muted small">
+    The source file is the Florida DFS registry, so every import is limited to
+    Florida. Within it, a licensee is imported when their mailing city is in one of
+    the selected counties <strong>and</strong> their license type is selected.
+  </p>
+
+  <form method="post" action="{{ url_for('imports.save_filters') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <div class="filter-grid">
+      <fieldset>
+        <legend>Counties</legend>
+        {% for name in county_names %}
+        <label class="check">
+          <input type="checkbox" name="counties" value="{{ name }}"
+                 {{ 'checked' if name in (settings.counties or []) else '' }}>
+          <span>{{ name }}</span>
+          <span class="muted small">({{ all_counties[name] | length }} cities)</span>
+        </label>
+        {% endfor %}
+      </fieldset>
+
+      <fieldset>
+        <legend>License types</legend>
+        {% for t in license_types %}
+        <label class="check">
+          <input type="checkbox" name="license_types" value="{{ t }}"
+                 {{ 'checked' if t in (settings.license_types or []) else '' }}>
+          <span>{{ t }}</span>
+        </label>
+        {% endfor %}
+      </fieldset>
+    </div>
+
+    <button type="submit" class="primary">Save filters</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Schedule</h2>
+  <p class="muted small">
+    When enabled, the import runs once a day at the time below. The time is local
+    to the chosen timezone, so it stays correct across daylight-saving changes.
+  </p>
+
+  <form method="post" action="{{ url_for('imports.save_schedule') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <label class="check">
+      <input type="checkbox" name="schedule_enabled"
+             {{ 'checked' if settings.schedule_enabled else '' }}>
+      <span>Run automatically every day</span>
+    </label>
+
+    <div class="inline-form schedule-row">
+      <label for="schedule_time" class="inline-label">At</label>
+      <input type="time" id="schedule_time" name="schedule_time"
+             value="{{ settings.schedule_time.strftime('%H:%M') }}" required>
+
+      <label for="schedule_timezone" class="inline-label">in</label>
+      <select id="schedule_timezone" name="schedule_timezone">
+        {% for tz in timezones %}
+          <option value="{{ tz }}"
+            {{ 'selected' if tz == settings.schedule_timezone else '' }}>{{ tz }}</option>
+        {% endfor %}
+      </select>
+
+      <button type="submit" class="primary">Save schedule</button>
+    </div>
+  </form>
+
+  {# [EN] The app cannot run itself on a timer — a server-side timer has to poll.
+     Saying so here prevents "I enabled it but nothing ran" on a box where the
+     systemd timer was never installed.
+     [RU] Приложение не может запускать себя по таймеру — опрашивать должен таймер
+     на сервере. Упоминание здесь предотвращает "я включил, но ничего не
+     запустилось" на машине, где таймер systemd не установили. #}
+  <p class="muted small note">
+    Requires the <code>agent-licence-parser.timer</code> systemd unit to be
+    installed and enabled on the server; it polls every 15 minutes and starts the
+    import when this schedule says it is due. See <code>deploy/README.md</code>.
+  </p>
+</section>
+
+<p class="back-link"><a href="{{ url_for('imports.index') }}">&larr; Back to imports</a></p>
+{% endblock %}

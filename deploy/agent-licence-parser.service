@@ -1,5 +1,5 @@
 [Unit]
-Description=Agent Licence daily parser (download the FL DFS registry, filter, load new agents / скачать реестр FL DFS, отфильтровать, догрузить новых агентов)
+Description=Agent Licence scheduled import — runs only when the schedule in the app says it is due / Импорт по расписанию — запускается только когда расписание в приложении говорит, что пора
 After=network-online.target postgresql.service
 Wants=network-online.target
 
@@ -9,7 +9,13 @@ User=agentapp
 Group=agentapp
 WorkingDirectory=/opt/agent_licence
 EnvironmentFile=/opt/agent_licence/.env
-ExecStart=/opt/agent_licence/.venv/bin/python3 -m scripts.parser
+# [EN] --if-due exits 0 immediately unless the schedule stored in import_settings
+# says this slot is due, so the timer can poll every 15 minutes cheaply. Every run
+# it does start is recorded in import_runs and visible on /imports.
+# [RU] --if-due сразу завершается с 0, если расписание из import_settings не говорит,
+# что слот наступил, поэтому таймер может дёшево опрашивать каждые 15 минут. Каждый
+# фактически запущенный импорт пишется в import_runs и виден на /imports.
+ExecStart=/opt/agent_licence/.venv/bin/python3 -m scripts.run_import --trigger scheduled --if-due
 TimeoutStartSec=3600
 
 NoNewPrivileges=true

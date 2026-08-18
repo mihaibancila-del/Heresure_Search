@@ -30,7 +30,7 @@ from app import config
 from app.models import db, user as user_model
 from app.security import hash_password, hash_token, normalize_email, verify_password
 from app.views import auth as auth_view
-from app.views.csrf import check_csrf
+from app.views.csrf import check_csrf, session_has_token
 
 bp = Blueprint("auth", __name__)
 
@@ -119,8 +119,43 @@ def load_user_and_require_login():
     # атакующий и будет использовать, и именно они меняют состояние. Никогда не
     # уводите эту проверку за условие по эндпоинту.
     if not check_csrf():
-        # [EN] 400, and no hint about what to fix — a real form always has the field.
-        # [RU] 400 и без подсказок — у настоящей формы поле всегда есть.
+        # [EN] The check above is unchanged and still covers every POST. Only the
+        # RESPONSE is split, by asking whether this session ever had a token:
+        #
+        #   - none ever issued -> the session expired or was cleared, so the person
+        #     is just signed out. Send them to the login form with an explanation;
+        #     a bare 400 here reads as "the app is broken" for what is a routine
+        #     timeout, and it hit every form (logout, admin actions, imports).
+        #   - a token exists but does not match -> a real anomaly, so 400 and no
+        #     hint about what to fix; a genuine form always carries the field.
+        #
+        # Security is identical either way: nothing has been executed at this point,
+        # and a cross-site POST for a signed-in victim still lands in the 400 branch.
+        #
+        # [RU] Проверка выше не изменилась и по-прежнему покрывает каждый POST.
+        # Разделён только ОТВЕТ — по признаку, был ли у этой сессии токен вообще:
+        #
+        #   - токен никогда не выдавался -> сессия истекла или была очищена, то есть
+        #     человек просто вышел из системы. Отправляем его на форму входа с
+        #     объяснением; сухой 400 здесь читается как "приложение сломалось" при
+        #     обычном таймауте, и он затрагивал каждую форму (выход, действия
+        #     админа, импорты).
+        #   - токен есть, но не совпадает -> настоящая аномалия, поэтому 400 и без
+        #     подсказок; у настоящей формы поле всегда есть.
+        #
+        # Безопасность одинакова в обоих случаях: к этому моменту ничего не
+        # выполнено, а межсайтовый POST для вошедшей жертвы всё так же попадает в
+        # ветку 400.
+        if not session_has_token():
+            flash("Your session expired, so the form could not be submitted. "
+                  "Please sign in and try again.", "error")
+            # [EN] Bare login URL, NOT login_redirect(): this is a POST, and its path
+            # is often POST-only (/imports/run, /logout). Remembering it as ?next=
+            # would send a GET there after login and answer 405.
+            # [RU] Чистый URL входа, а НЕ login_redirect(): это POST, и его путь часто
+            # доступен только для POST (/imports/run, /logout). Запомнив его в ?next=,
+            # мы бы после входа сделали туда GET и получили 405.
+            return redirect(url_for("auth.login"))
         return "Bad request (CSRF check failed).", 400
 
     # [EN] is_public() is re-checked here on purpose, so PUBLIC_ENDPOINTS remains

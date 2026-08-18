@@ -1,12 +1,34 @@
 [Unit]
-Description=Daily run of agent-licence-parser at 9:00 New York time / Ежедневный запуск agent-licence-parser в 9:00 по Нью-Йорку
+Description=Poll the import schedule set in the app every 15 minutes / Каждые 15 минут проверять расписание импорта, заданное в приложении
 
 [Timer]
-# [EN] Timezone right in the spec — systemd handles the DST switch (EST/EDT)
-# on its own, unlike a plain cron with TZ=.
-# [RU] Часовой пояс прямо в спецификации — systemd сам учитывает переход
-# на летнее/зимнее время (EST/EDT), в отличие от обычного cron с TZ=.
-OnCalendar=*-*-* 09:00:00 America/New_York
+# [EN] The schedule itself now lives in the database (import_settings), set on
+# /imports/settings in the UI, so this timer no longer owns the time of day. It
+# just POLLS every 15 minutes; `run_import --if-due` decides whether the
+# configured slot has arrived and exits doing nothing if not.
+#
+# Why polling rather than an OnCalendar that matches the setting: systemd cannot
+# read the database, so a UI-configurable time can only be honoured by asking
+# often enough. 15 minutes is the resulting granularity — a schedule set to 09:00
+# starts between 09:00 and 09:15.
+#
+# The timezone and DST correctness moved with it: --if-due compares wall-clock time
+# in the zone stored alongside the schedule, so 09:00 stays 09:00 local.
+#
+# [RU] Само расписание теперь живёт в базе (import_settings) и задаётся в интерфейсе
+# на /imports/settings, поэтому этот таймер больше не владеет временем суток. Он
+# только ОПРАШИВАЕТ каждые 15 минут; `run_import --if-due` решает, наступил ли
+# настроенный слот, и завершается, ничего не сделав, если нет.
+#
+# Почему опрос, а не OnCalendar, совпадающий с настройкой: systemd не может читать
+# базу, поэтому настраиваемое в интерфейсе время можно соблюсти только достаточно
+# частым опросом. 15 минут — итоговая точность: расписание на 09:00 стартует между
+# 09:00 и 09:15.
+#
+# Корректность часового пояса и перехода на летнее время переехала туда же: --if-due
+# сравнивает локальное время в зоне, сохранённой вместе с расписанием, поэтому 09:00
+# остаётся 09:00 по месту.
+OnCalendar=*:0/15
 Persistent=true
 RandomizedDelaySec=60
 

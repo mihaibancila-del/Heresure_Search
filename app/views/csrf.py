@@ -61,6 +61,34 @@ def csrf_token() -> str:
     return token
 
 
+def session_has_token() -> bool:
+    """[EN] Whether this session ever minted a CSRF token. Distinguishes the two
+    reasons check_csrf() can fail:
+
+      - No token in the session at all -> the session is new, expired or was
+        cleared (a sign-out, a deactivated account, a restart with a new
+        SECRET_KEY). The person is simply no longer signed in, and the useful
+        response is "sign in again", not a bare 400.
+      - A token exists but the submitted one does not match -> genuinely
+        suspicious, and 400 is the right answer.
+
+    Reading this does NOT move or weaken the check itself — the check stays first
+    and unconditional; only the failure response differs.
+
+    [RU] Создавала ли эта сессия когда-либо CSRF-токен. Различает две причины сбоя
+    check_csrf():
+
+      - Токена в сессии нет вовсе -> сессия новая, истекла или была очищена (выход,
+        отключённый аккаунт, перезапуск с новым SECRET_KEY). Человек просто больше
+        не в системе, и полезный ответ — "войдите снова", а не сухой 400.
+      - Токен есть, но присланный не совпадает -> действительно подозрительно, и 400
+        здесь уместен.
+
+    Это чтение НЕ перемещает и не ослабляет саму проверку — она остаётся первой и
+    безусловной; отличается только ответ при сбое."""
+    return bool(session.get(_CSRF_KEY))
+
+
 def check_csrf() -> bool:
     """[EN] True if this request may proceed. Only POST is checked — GET must stay
     side-effect free, which is why every state change in this app is a POST.

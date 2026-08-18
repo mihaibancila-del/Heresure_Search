@@ -9,6 +9,31 @@ Jinja-фильтры — чисто презентационное формат�
 """
 
 
+def to_duration(delta) -> str:
+    """[EN] Formats a timedelta as a compact human duration for the import history
+    ("1h 04m", "3m 12s", "8s"). Postgres returns the `duration` column as a
+    timedelta; None means the run never finished and had no heartbeat to measure to.
+
+    [RU] Форматирует timedelta в компактную человеческую длительность для истории
+    импортов ("1h 04m", "3m 12s", "8s"). Postgres отдаёт колонку `duration` как
+    timedelta; None означает, что запуск не завершился и мерить не от чего."""
+    if delta is None:
+        return "—"
+
+    seconds = int(delta.total_seconds())
+    if seconds < 0:
+        return "—"
+    if seconds < 60:
+        return f"{seconds}s"
+
+    minutes, seconds = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m {seconds:02d}s"
+
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes:02d}m"
+
+
 def to_tel_href(phone: str) -> str:
     """Builds a tel: link from a phone number so that tapping it on mobile
     offers to place a call.

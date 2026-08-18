@@ -25,6 +25,7 @@ services:
       # run once on first init, in filename order, to create the tables
       - ./sql/create_table.sql:/docker-entrypoint-initdb.d/01_create_table.sql:ro
       - ./sql/create_users_table.sql:/docker-entrypoint-initdb.d/02_create_users_table.sql:ro
+      - ./sql/create_imports_tables.sql:/docker-entrypoint-initdb.d/03_create_imports_tables.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-Agents_Heresure}"]
       interval: 5s
@@ -48,6 +49,14 @@ services:
       # [RU] Подписывает cookie сессии. Здесь значение только для разработки; на
       # сервере берётся из .env. Его смена разлогинивает всех.
       SECRET_KEY: ${SECRET_KEY:-heresure_dev_secret_not_for_production}
+      # [EN] Explicit false, not merely unset: this stack is plain http on
+      # localhost, so a non-Secure cookie is correct here, and saying so silences
+      # the "not set" warning app/config.py prints for deployments that forgot it.
+      # [RU] Явное false, а не просто отсутствие значения: этот стек — обычный http
+      # на localhost, поэтому cookie без Secure здесь уместна, а явное указание
+      # убирает предупреждение "не задан", которое app/config.py печатает для
+      # деплоев, где об этом забыли.
+      SESSION_COOKIE_SECURE: "false"
       # SMTP_* can be added here to run `python -m scripts.send_campaign` in-container
     ports:
       - "${APP_HOST_PORT:-8000}:8000"
