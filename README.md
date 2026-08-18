@@ -56,9 +56,9 @@ a server, migrating the database, updating a live deployment), see
   runs `scripts.parser` once a day at 9:00 **America/New_York** (DST-aware).
   It's independent of anyone's laptop being on.
 - **Firewall**: `ufw` — only SSH (22) and HTTP/HTTPS (80/443) are open.
-- **Access**: the site currently has no login (open to anyone with the
-  link) — see `BASIC_AUTH_USERS` in `.env.example` to turn on per-user
-  HTTP Basic Auth later without a code change.
+- **Access**: session login, **invite only**. There is no signup page — an
+  admin creates each account on `/admin/users` and passes on a one-time
+  link. Every URL except the login and invite pages requires a session.
 
 ## Data flow
 
@@ -133,10 +133,38 @@ Requires a local Postgres with the `licenses` table
 
 All configuration is environment-based via `.env` (see `.env.example`
 for the full list): Postgres connection (`PGHOST`/`PGPORT`/`PGUSER`/
-`PGDATABASE`/`PGPASSWORD`), SMTP creds for outreach, and optional
-`BASIC_AUTH_USERS` to require a login on the web viewer. No secret has
-a hardcoded default in code — the app refuses to start without
-`PGPASSWORD` set.
+`PGDATABASE`/`PGPASSWORD`), SMTP creds for outreach, and `SECRET_KEY`
+for the login session cookie. No secret has a hardcoded default in code —
+the app refuses to start without `PGPASSWORD` **or** `SECRET_KEY` set.
+
+## Accounts and login
+
+Access is invite-only; there is no signup page. A row in the `users` table
+is the only way in.
+
+Create the first admin (a fresh database has no users, so this cannot be
+done in the UI):
+
+```bash
+python3 -m scripts.manage_users set-password you@example.com --role admin
+```
+
+After that, invite people from **/admin/users** in the web UI. Creating an
+invite shows a one-time link — no email is sent, you pass it on yourself.
+The invited person sets their own password from that link, so you never
+handle their password. Links expire after `INVITE_TTL_HOURS` (default 72)
+and work once.
+
+The same script covers the cases the UI cannot:
+
+```bash
+python3 -m scripts.manage_users list
+python3 -m scripts.manage_users invite bob@example.com --base-url https://your-host
+python3 -m scripts.manage_users deactivate bob@example.com
+```
+
+Password reset by email is not built yet — to recover an account today,
+deactivate it and issue a fresh invite.
 
 ## Security notes
 
@@ -155,9 +183,14 @@ a hardcoded default in code — the app refuses to start without
   removed from the code and rotated on the server, but it still exists
   in the git history of this repository. If that password was ever
   reused anywhere else, rotate it there too.
-- The web viewer currently has **no authentication** by default (open
-  to anyone with the URL) — see `BASIC_AUTH_USERS` above to lock it
-  down.
+- **Authentication** is invite-only session login, applied by default to
+  every endpoint: a single `before_request` hook denies anything not in
+  `PUBLIC_ENDPOINTS` (login, invite acceptance, static assets), so a new
+  route cannot accidentally ship unprotected. Passwords are scrypt-hashed;
+  invite tokens are stored only as sha256. Set `SESSION_COOKIE_SECURE=true`
+  in production.
+- `app/static/` is served **without** authentication. Never put anything
+  sensitive there.
 
 ## Operations
 

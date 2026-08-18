@@ -52,9 +52,14 @@ addresses of Florida insurance agents. Therefore:
   are gitignored **and** dockerignored. Keep them that way.
 - **Never send a live email.** `scripts/send_campaign.py` and
   `scripts/send_test_email.py` contact real people. Verify with
-  `--dry-run` only, and ask the maintainer before any real send.
-- The web page is protected by HTTP Basic Auth (`BASIC_AUTH_USERS`). Never
-  weaken or bypass it — see the decorator-order trap in §4.
+  `--dry-run` only, and ask the maintainer before any real send. The web app
+  itself has no mail capability at all, deliberately — invites are copy-paste
+  links, not emails.
+- The whole site is behind an **invite-only session login**. Access is default
+  deny: one `before_request` hook in `create_app()` requires a session for every
+  endpoint not named in `PUBLIC_ENDPOINTS` (`app/views/auth.py`). Never add an
+  endpoint to that set without checking what it renders, and never disable the
+  hook to "test something" — the page serves real personal data.
 
 ---
 
@@ -65,25 +70,36 @@ MVC-style Flask app plus standalone operational scripts.
 ```
 wsgi.py                       WSGI entry point — `gunicorn wsgi:app`; also the dev server
 app/
-  __init__.py                 create_app() factory
-  config.py                   THE config module: loads .env, exposes PG_*/auth settings
+  __init__.py                 create_app() factory; registers THE auth before_request
+  config.py                   THE config module: loads .env, exposes PG_*/session settings
+  security.py                 password hashing + invite token primitives (no Flask, no SQL)
   models/
     db.py                     psycopg2 connection + connection() context manager
-    license.py                every SQL statement the web app runs
+    license.py                every SQL statement the web app runs against `licenses`
+    user.py                   every SQL statement about accounts and invites
   controllers/
     licenses.py               the `/` route, as a Flask blueprint
+    auth.py                   /login, /logout, /invite/<token>, and the app-wide guard
+    admin.py                  /admin/users — invite, revoke, deactivate (admin only)
   views/
-    auth.py                   require_auth — HTTP Basic Auth decorator
+    auth.py                   PUBLIC_ENDPOINTS, session helpers, admin_required
+    csrf.py                   hand-rolled synchroniser-token CSRF for all POSTs
     filters.py                to_tel_href, registered as the `tel_href` Jinja filter
+  templates/base.html         shared layout: topbar, flashes
   templates/index.html        the paginated table
+  templates/login.html        sign-in form
+  templates/accept_invite.html  invited user sets their own password
+  templates/admin_users.html  account list + invite form
   static/css/main.css
-  static/js/main.js           the stub "Send Email" toast
+  static/js/main.js           the stub "Send Email" toast + invite-link copy button
 scripts/
   parser.py                   daily ETL: download FL DFS registry → filter → load
   send_campaign.py            one-at-a-time outreach; flips checked = true after each send
   send_test_email.py          SMTP smoke test (no DB)
+  manage_users.py             CLI accounts: bootstrap the first admin, invite, deactivate
 sql/
   create_table.sql            `licenses` schema; also compose's initdb script
+  create_users_table.sql      `users` schema; compose initdb 02_, apply by hand elsewhere
   load_script.sql             insert-only-new loader invoked by parser.py via psql
   dedupe_licenses.sql         one-off maintenance, run by hand
 deploy/                       provision/update scripts, nginx conf, systemd units, runbook
@@ -97,9 +113,14 @@ Dockerfile docker-compose.yml .dockerignore
 |---|---|---|
 | `app/models/` | All SQL, connection lifecycle | Know about requests or HTML |
 | `app/controllers/` | Query params, pagination math, choosing a template | Contain SQL |
-| `app/views/` + templates | Formatting, auth decorator | Query the DB |
+| `app/views/` + templates | Formatting, session/CSRF helpers, decorators | Query the DB |
 | `app/config.py` | Reading `.env` and the environment | Import Flask or any model |
+| `app/security.py` | Password/token primitives | Import Flask, touch the DB or a request |
 | `scripts/` | Operational one-shots | Be imported by the web app |
+
+Note the consequence for auth: the request guard has to read the `users` row on
+every request, which is SQL, so it lives in `app/controllers/auth.py`
+(`load_user_and_require_login`) and not in `app/views/auth.py`.
 
 ### How things run
 
@@ -153,8 +174,33 @@ Recorded so they are not silently reversed.
 - **No `pyproject.toml`.** `python -m` from the repo root covers both systemd
   (`WorkingDirectory=/opt/agent_licence`) and manual runs. Add one if/when a
   `tests/` directory appears and imports need resolving.
-- **No `base.html`.** One page, one template. Add a base when a second page
-  exists.
+- **`base.html` now exists.** The rule was "add a base when a second page
+  exists"; login, invite acceptance and the admin page are that second page.
+- **Access control is app-wide and default-deny, not per-route.** A single
+  `before_request` hook denies every endpoint not in `PUBLIC_ENDPOINTS`. The old
+  per-route `@require_auth` was removed because forgetting it — or writing the two
+  decorators in the wrong order — silently served real personal data. Adding a
+  route now cannot leak it; only editing `PUBLIC_ENDPOINTS` can.
+- **An invite IS a user row**, not a separate `invites` table. A pending invite is
+  a `users` row with `password_hash IS NULL` and a live `invite_token_hash`.
+  "Nobody can self-register" is then true by construction: no row, no access.
+- **Invites are copy-paste links, never emails.** The admin page shows the link
+  once; the raw token is never stored (only its sha256). This keeps the web app
+  incapable of sending mail, so it can never reach the real agents in `licenses`.
+- **Passwords use `werkzeug.security` (scrypt), which ships with Flask.** Real
+  KDF, and `requirements.txt` stays at four lines. Do not add `bcrypt`,
+  `passlib`, `flask-login` or `flask-wtf` — sessions and CSRF are ~200 lines of
+  hand-rolled code here for the same reason the `.env` parser is.
+- **Invite tokens are stored as a plain sha256, not a KDF.** Correct because a
+  token is 256 bits of `secrets` randomness — not guessable from a dictionary —
+  and lookups must be indexable. Passwords are the opposite case; don't unify them.
+- **`SECRET_KEY` is a function (`config.secret_key()`), not a constant**, for the
+  same reason as `pg_password()`: `send_test_email.py` imports `app.config` for
+  SMTP only and must not need it. `create_app()` calls it so the web app still
+  fails fast.
+- **`user.force_set_password()` is not reachable from the web app.** It exists for
+  `scripts/manage_users.py` as the break-glass path when every admin is locked
+  out. Keep it out of any controller.
 - **`scripts/send_campaign.py` keeps its own psql-based DB access.** Folding it
   into `app/models/license.py` would mix psql-subprocess and psycopg2 access in
   one module. Worth revisiting when the web app grows a real send endpoint.
@@ -168,13 +214,30 @@ obvious error.
 
 - **Decorator order on routes.** The route must be the OUTER decorator:
   ```python
-  @bp.route("/")      # outer
-  @require_auth       # inner
-  def index(): ...
+  @bp.route("/admin/users")   # outer
+  @admin_required             # inner
+  def users(): ...
   ```
-  Flip them and the blueprint registers the *unwrapped* function — **auth is
-  silently bypassed**, no error, on a page serving real personal data. Always
-  verify with `BASIC_AUTH_USERS` set and expect a 401.
+  Flip them and the blueprint registers the *unwrapped* function. This used to
+  silently disable authentication entirely; since access control moved to the
+  app-wide hook it is less dangerous, but flipping these on an admin route still
+  lets **any signed-in member manage accounts**. Only `admin_required` is applied
+  this way now.
+- **`PUBLIC_ENDPOINTS` is the entire authentication boundary.** Adding a name to
+  that frozenset in `app/views/auth.py` makes the page world-readable with no
+  error and no warning. Three names belong there; if you find a fourth, be sure.
+- **A new `before_request` hook could run before the auth hook.** Flask runs them
+  in registration order, and `create_app()` registers the auth hook *before* any
+  blueprint on purpose. If you add another `before_request` (or a
+  `before_app_request` on a blueprint) that touches `g.user`, check the ordering —
+  loading the user and enforcing the login are deliberately one function so they
+  cannot be reordered relative to each other.
+- **Changing `SECRET_KEY` logs every user out**, including you, with no error —
+  the cookies simply stop verifying. Generate it once per environment and leave it.
+- **`SESSION_COOKIE_SECURE=true` over plain HTTP looks like "login is broken".**
+  The browser accepts the redirect but never stores or returns the cookie, so you
+  land back on the login form with no message. Keep it `false` locally, `true` on
+  the server.
 - **`\copy` in `sql/load_script.sql`** is a *client-side* psql meta-command. Its
   path resolves against psql's own CWD, which `scripts/parser.py` pins with
   `cwd=STAGING_CSV.parent` on the subprocess. psql performs **no variable
@@ -206,6 +269,34 @@ obvious error.
 ---
 
 ## 5. Changes
+
+### 2026-08-18 — invite-only login (VOC-12)
+
+The site had **no authentication at all**: `BASIC_AUTH_USERS` was unset in `.env`,
+and both `deploy/README.md` and `provision.sh` instructed the operator to leave it
+that way, so ~64k real agent records were served to anyone with the URL. Replaced
+with session login, invite only.
+
+- **New:** `app/security.py`, `app/models/user.py`, `app/controllers/auth.py`,
+  `app/controllers/admin.py`, `app/views/csrf.py`, `sql/create_users_table.sql`,
+  `scripts/manage_users.py`, and the `base.html` / `login.html` /
+  `accept_invite.html` / `admin_users.html` templates.
+- **Removed:** `require_auth` and `BASIC_AUTH_USERS`. `app/views/auth.py` was
+  rewritten as session helpers + `PUBLIC_ENDPOINTS` + `admin_required`.
+- Access control moved from a per-route decorator to one app-wide
+  `before_request`, which also CSRF-checks every POST. Default deny.
+- `SECRET_KEY` is now required; `create_app()` fails fast on it like `PGPASSWORD`.
+- Session cookie: `HttpOnly`, `SameSite=Lax`, `Secure` (configurable), 14-day
+  permanent lifetime so a login survives a browser restart.
+- No new dependencies — hashing is `werkzeug.security` (bundled with Flask).
+- Compose gained a `02_create_users_table.sql` initdb mount and a dev `SECRET_KEY`.
+  **Existing databases need the SQL applied by hand** (initdb only runs on a fresh
+  volume — see the trap above).
+- Verified end-to-end against the compose database with a 47-check script: anonymous
+  denial on every route, CSRF rejection, single-use/expired/revoked invites,
+  case-insensitive login, wrong-password and unknown-email both 401, open-redirect
+  attempts on `?next=`, member vs admin separation, immediate effect of
+  deactivation, and last-admin/self-deactivate protection.
 
 ### 2026-08-18 — flat layout → MVC
 
@@ -242,7 +333,18 @@ is byte-identical to before apart from `<style>`→`<link>` and inline→externa
 
 - **No tests.** Verification is end-to-end and manual; see §2 and the
   verification section of `deploy/README.md`. Highest-value first tests: the
-  401/200 auth pair (guards the trap in §4) and `to_tel_href` units.
+  anonymous-redirect / signed-in-200 pair (guards `PUBLIC_ENDPOINTS`), invite
+  single-use, and `to_tel_href` units. The VOC-12 work was verified with a
+  throwaway curl script; it was not kept, because a `tests/` directory needs the
+  `pyproject.toml` decision above to be revisited first.
+- **No password reset** (VOC-19). Recovery today is: deactivate the account, then
+  issue a fresh invite. `scripts/manage_users.py set-password` is the admin-side
+  equivalent.
+- **No login rate limiting.** Brute force is bounded only by scrypt's cost. Fine
+  for an invite-only tool behind nginx, but a `failed_attempts`/`locked_until`
+  pair on `users`, or a limit in nginx, would be the next hardening step.
+- **Deactivation ends access on the next request, but does not delete the row.**
+  There is no account-deletion path; `users` is append-mostly by design.
 - `sql/create_table.sql` has no index and no unique constraint on the dedupe key
   (`"Full Name"` + `"Business Email"`), so the anti-join in `load_script.sql`
   does the work.

@@ -1,0 +1,69 @@
+{#
+  [EN] Shared layout. AGENTS.md §3 said "no base.html — one page, one template.
+  Add a base when a second page exists." Login, invite acceptance and the admin
+  page are that second page, so it exists now.
+
+  [RU] Общий каркас. В AGENTS.md §3 было: "никакого base.html — одна страница,
+  один шаблон. Добавить базовый, когда появится вторая страница." Вход, принятие
+  приглашения и админ-страница — это и есть вторая страница, так что теперь он есть.
+#}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Agents_Heresure{% endblock %}</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
+</head>
+<body class="{% block body_class %}{% endblock %}">
+
+{% if current_user() %}
+<nav class="topbar">
+  <a class="brand" href="{{ url_for('licenses.index') }}">Agents_Heresure</a>
+  <div class="topbar-right">
+    {% if current_user().role == 'admin' %}
+      <a href="{{ url_for('admin.users') }}">Users</a>
+    {% endif %}
+    <span class="who" title="{{ current_user().email }}">{{ current_user().email }}</span>
+    {# [EN] POST, so a stray <img> on another site cannot sign anyone out.
+       [RU] POST, чтобы случайный <img> на другом сайте никого не разлогинил. #}
+    <form method="post" action="{{ url_for('auth.logout') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="linkish">Sign out</button>
+    </form>
+  </div>
+</nav>
+{% endif %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+    <div class="flashes">
+      {% for category, message in messages %}
+        {% if category == 'invite_link' %}
+          {# [EN] The one-time invite link. Rendered as a selectable field rather
+             than loose text so it can be copied without mangling, and never
+             stored anywhere — only its sha256 is in the database.
+             [RU] Одноразовая ссылка-приглашение. Показана как выделяемое поле, а
+             не обычный текст, чтобы её можно было скопировать без искажений; она
+             нигде не сохраняется — в базе только её sha256. #}
+          <div class="flash invite-link">
+            <div class="invite-label">Invite link — copy it now, it is shown only once</div>
+            <div class="copy-row">
+              <input type="text" readonly value="{{ message }}" onclick="this.select()">
+              <button type="button" class="copy-btn" onclick="copyInvite(this)">Copy</button>
+            </div>
+          </div>
+        {% else %}
+          <div class="flash {{ category }}">{{ message }}</div>
+        {% endif %}
+      {% endfor %}
+    </div>
+  {% endif %}
+{% endwith %}
+
+{% block content %}{% endblock %}
+
+<script src="{{ url_for('static', filename='js/main.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

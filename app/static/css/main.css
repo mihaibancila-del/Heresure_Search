@@ -180,3 +180,192 @@ tbody tr:last-child td {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
 }
+
+/* [EN] --- Auth, flashes and the users admin page --------------------------
+   Added with the invite-only login (VOC-12). Shares the tokens and .badge /
+   table rules above rather than restating them.
+   [RU] --- Авторизация, flash-сообщения и админ-страница пользователей ------
+   Добавлено вместе со входом по приглашению (VOC-12). Использует переменные и
+   правила .badge / table выше, а не повторяет их. */
+:root {
+  --badge-pending-bg: #e0e7ff;
+  --badge-pending-text: #3730a3;
+  --danger: #b91c1c;
+}
+.badge.pending { background: var(--badge-pending-bg); color: var(--badge-pending-text); }
+
+/* [EN] Only the login and invite pages use this — a single centred card.
+   [RU] Используется только страницами входа и приглашения — одна карточка по центру. */
+body.centered {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 24px;
+}
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 32px;
+  width: 100%;
+  max-width: 380px;
+}
+.card h1 { margin-bottom: 8px; }
+.card form { margin-top: 20px; }
+.card label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.card input[type="email"],
+.card input[type="password"] {
+  width: 100%;
+  padding: 9px 12px;
+  margin-bottom: 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 14px;
+  background: var(--surface);
+  color: var(--text);
+}
+.card input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.muted { color: var(--text-muted); font-size: 13px; }
+.small { font-size: 12px; }
+button.primary {
+  width: 100%;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+button.primary:hover { background: var(--accent-hover); }
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 32px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.topbar .brand {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+  text-decoration: none;
+}
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 13px;
+}
+.topbar-right a { color: var(--text-muted); text-decoration: none; }
+.topbar-right a:hover { color: var(--accent); }
+.topbar-right .who {
+  color: var(--text-muted);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* [EN] A button that reads as a link — used for POST actions (sign out,
+   deactivate) that must not be GET links.
+   [RU] Кнопка, выглядящая как ссылка — для POST-действий (выход, отключение),
+   которые не должны быть GET-ссылками. */
+button.linkish {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+  font-family: inherit;
+}
+button.linkish:hover { color: var(--accent); }
+button.linkish.danger:hover { color: var(--danger); }
+
+.flashes { margin: 16px 32px 0; display: flex; flex-direction: column; gap: 8px; }
+body.centered .flashes {
+  position: fixed;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  margin: 16px 0 0;
+  width: 100%;
+  max-width: 380px;
+}
+.flash {
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.flash.error { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
+.flash.success { background: var(--badge-true-bg); border-color: #bbf7d0; color: var(--badge-true-text); }
+.flash.invite-link { background: #eff6ff; border-color: #bfdbfe; }
+.invite-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1e40af;
+  margin-bottom: 6px;
+}
+.copy-row { display: flex; gap: 8px; }
+.copy-row input {
+  flex: 1;
+  padding: 7px 10px;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  background: var(--surface);
+  color: var(--text);
+}
+.copy-btn {
+  border: 1px solid var(--accent);
+  background: var(--surface);
+  color: var(--accent);
+  padding: 5px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.copy-btn:hover { background: var(--accent); color: #fff; }
+
+.panel {
+  margin: 16px 32px;
+  padding: 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.panel h2 { font-size: 14px; margin: 0 0 12px; }
+.inline-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.inline-form input[type="email"], .inline-form select {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  background: var(--surface);
+  color: var(--text);
+}
+.inline-form input[type="email"] { min-width: 240px; }
+.inline-form button.primary { width: auto; }
+.panel .muted { margin: 10px 0 0; }
+/* [EN] Several small POST forms sitting side by side in one table cell.
+   [RU] Несколько маленьких POST-форм рядом в одной ячейке таблицы. */
+.row-actions { display: flex; gap: 14px; align-items: center; }
+.row-actions form { display: inline; }

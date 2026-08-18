@@ -1,11 +1,7 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>Licenses — Agents_Heresure</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
-</head>
-<body>
+{% extends "base.html" %}
+{% block title %}Licenses — Agents_Heresure{% endblock %}
+
+{% block content %}
 <header>
   <h1>Licenses — Agents_Heresure</h1>
   <div class="meta">Total records: {{ total }} · page {{ page }} of {{ total_pages }}</div>
@@ -82,8 +78,4 @@
 </div>
 
 <div class="toast" id="toast">Sending is not wired up yet</div>
-
-<script src="{{ url_for('static', filename='js/main.js') }}"></script>
-
-</body>
-</html>
+{% endblock %}

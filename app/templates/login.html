@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Sign in — Agents_Heresure{% endblock %}
+{% block body_class %}centered{% endblock %}
+
+{% block content %}
+<main class="card">
+  <h1>Agents_Heresure</h1>
+  <p class="muted">Internal lead-tracking tool. Access is by invitation only.</p>
+
+  <form method="post" action="{{ url_for('auth.login', next=next) }}" autocomplete="on">
+    {# [EN] Without this field the app-wide CSRF check rejects the POST with a 400.
+       [RU] Без этого поля общая проверка CSRF отклонит POST с кодом 400. #}
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <label for="email">Email</label>
+    <input type="email" id="email" name="email" value="{{ email }}"
+           required autofocus autocomplete="username">
+
+    <label for="password">Password</label>
+    <input type="password" id="password" name="password"
+           required autocomplete="current-password">
+
+    <button type="submit" class="primary">Sign in</button>
+  </form>
+
+  {# [EN] No "create an account" link on purpose — there is no signup route to
+     point at. Password reset is VOC-19 and is not built yet, so the only recovery
+     today is an admin issuing a fresh invite.
+     [RU] Ссылки "создать аккаунт" нет намеренно — маршрута регистрации не
+     существует. Сброс пароля — это VOC-19, он ещё не сделан, поэтому сейчас
+     единственный способ восстановления — новое приглашение от админа. #}
+  <p class="muted small">Lost your password? Ask an admin to send you a new invite.</p>
+</main>
+{% endblock %}

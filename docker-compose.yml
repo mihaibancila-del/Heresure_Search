@@ -22,8 +22,9 @@ services:
       - "${PG_HOST_PORT:-5434}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-      # runs once on first init to create the `licenses` table
+      # run once on first init, in filename order, to create the tables
       - ./sql/create_table.sql:/docker-entrypoint-initdb.d/01_create_table.sql:ro
+      - ./sql/create_users_table.sql:/docker-entrypoint-initdb.d/02_create_users_table.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-Agents_Heresure}"]
       interval: 5s
@@ -42,6 +43,11 @@ services:
       PGUSER: ${POSTGRES_USER:-postgres}
       PGPASSWORD: ${POSTGRES_PASSWORD:-heresure_dev_pw}
       PGDATABASE: ${POSTGRES_DB:-Agents_Heresure}
+      # [EN] Signs the session cookie. Dev-only value here; on the server it comes
+      # from .env. Changing it logs everyone out.
+      # [RU] Подписывает cookie сессии. Здесь значение только для разработки; на
+      # сервере берётся из .env. Его смена разлогинивает всех.
+      SECRET_KEY: ${SECRET_KEY:-heresure_dev_secret_not_for_production}
       # SMTP_* can be added here to run `python -m scripts.send_campaign` in-container
     ports:
       - "${APP_HOST_PORT:-8000}:8000"

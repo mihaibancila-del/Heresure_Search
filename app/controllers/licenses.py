@@ -12,18 +12,21 @@ from flask import Blueprint, render_template, request
 
 from app.config import PAGE_SIZE
 from app.models import db, license
-from app.views.auth import require_auth
 
 bp = Blueprint("licenses", __name__)
 
 
-# [EN] Decorator order matters: the route must be the OUTER decorator so the
-# blueprint registers the auth-wrapped function. Flipping these silently serves
-# the page without auth. / [RU] Порядок декораторов важен: маршрут должен быть
-# ВНЕШНИМ, чтобы blueprint зарегистрировал обёрнутую auth-ом функцию. Если
-# поменять их местами, страница молча начнёт отдаваться без авторизации.
+# [EN] No auth decorator here on purpose. Access control is app-wide: the
+# before_request hook registered in create_app() requires a session for every
+# endpoint that is not in PUBLIC_ENDPOINTS, and this one is not. That replaced
+# the old @require_auth, where writing the decorators in the wrong order silently
+# served this exact page — real names, emails and phone numbers — with no auth.
+# [RU] Декоратора авторизации здесь нет намеренно. Контроль доступа общий: хук
+# before_request, зарегистрированный в create_app(), требует сессию для каждого
+# эндпоинта, которого нет в PUBLIC_ENDPOINTS, а этого там нет. Это заменило старый
+# @require_auth, где неверный порядок декораторов молча отдавал именно эту
+# страницу — реальные ФИО, email и телефоны — вообще без авторизации.
 @bp.route("/")
-@require_auth
 def index():
     status = license.normalize_status(request.args.get("status", "all"))
 

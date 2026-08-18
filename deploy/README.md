@@ -79,8 +79,25 @@ sudo -u agentapp nano .env
 Fill in:
 - `PGUSER=agents_app`, `PGDATABASE=Agents_Heresure`, `PGPASSWORD=<password from step 2>`
 - `SMTP_*` — if you'll run the campaign from the server too
-- Leave `BASIC_AUTH_USERS` commented out — the site is open to anyone with the
-  link for now, no login/password (you can enable it later, see the comment in the file)
+- `SECRET_KEY` — **required**, the app will not start without it. Generate one
+  on the server and never change it afterwards (changing it logs everyone out):
+  ```bash
+  python3 -c "import secrets; print(secrets.token_urlsafe(48))"
+  ```
+- `SESSION_COOKIE_SECURE=true` — the server is behind nginx with TLS. Leaving it
+  false would let the session cookie travel over plain HTTP.
+
+Then create the `users` table and the first admin account (the site is
+invite-only and a restored dump may not contain a `users` table yet):
+
+```bash
+sudo -u agentapp psql -h localhost -U agents_app -d Agents_Heresure \
+  -f /opt/agent_licence/sql/create_users_table.sql
+cd /opt/agent_licence && sudo -u agentapp .venv/bin/python -m scripts.manage_users \
+  set-password you@example.com --role admin
+```
+
+Everyone else is invited from `/admin/users` in the web UI once you can log in.
 
 ```bash
 sudo chmod 600 /opt/agent_licence/.env

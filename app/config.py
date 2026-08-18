@@ -17,6 +17,7 @@ docker-compose environment: переопределяют файл без доп�
 """
 
 import os
+import sys
 from pathlib import Path
 
 # [EN] app/config.py -> the repo root is one level up. resolve() so a symlinked
@@ -79,15 +80,125 @@ def pg_password() -> str:
     return get_required("PGPASSWORD")
 
 
-# [EN] HTTP Basic Auth — on the server the database holds real names/emails/phones,
-# access is team-only. Format in .env: BASIC_AUTH_USERS=user1:pass1,user2:pass2
-# If the variable is unset, auth is disabled (for local development).
-# [RU] HTTP Basic Auth — на сервере в базе реальные ФИО/email/телефоны, доступ
-# только для команды. Формат в .env: BASIC_AUTH_USERS=user1:pass1,user2:pass2
-# Если переменная не задана — auth выключена (для локальной разработки).
-_raw_users = os.environ.get("BASIC_AUTH_USERS", "")
-BASIC_AUTH_USERS = dict(
-    pair.split(":", 1) for pair in _raw_users.split(",") if ":" in pair
-)
+def secret_key() -> str:
+    """[EN] Signs the session cookie. A function, not a constant, for the same
+    reason as pg_password(): send_test_email.py imports this module for SMTP
+    settings only and must not be blocked by a missing SECRET_KEY. create_app()
+    calls it at boot, so the web app still fails fast.
+
+    Losing or changing this value invalidates every existing session — everyone
+    is logged out. It must therefore be stable and secret; generate one with
+    `python3 -c "import secrets; print(secrets.token_urlsafe(48))"`.
+
+    [RU] Подписывает cookie сессии. Функция, а не константа, по той же причине,
+    что и pg_password(): send_test_email.py импортирует этот модуль только за
+    SMTP-настройками, и отсутствие SECRET_KEY не должно его блокировать.
+    create_app() вызывает её при старте, поэтому веб-приложение по-прежнему
+    падает сразу.
+
+    Потеря или смена значения делает недействительными все текущие сессии —
+    все разлогиниваются. Поэтому оно должно быть постоянным и секретным;
+    сгенерировать: `python3 -c "import secrets; print(secrets.token_urlsafe(48))"`."""
+    return get_required("SECRET_KEY")
+
+
+def _int_env(name: str, default: int) -> int:
+    """[EN] Tolerant int parser — a malformed value falls back to the default
+    rather than taking the whole app down at import.
+    [RU] Терпимый парсер int — некорректное значение откатывается к значению по
+    умолчанию, а не роняет всё приложение при импорте."""
+    try:
+        return int(os.environ.get(name, default))
+    except ValueError:
+        return default
+
+
+# [EN] How long a login lasts. The session cookie is "permanent" in Flask's
+# sense, so closing the browser does not log the user out — that is what
+# "stays logged in across sessions" requires.
+# [RU] Сколько живёт вход. Cookie сессии "permanent" в терминах Flask, поэтому
+# закрытие браузера не разлогинивает — это и требуется от "остаётся в системе
+# между сессиями".
+SESSION_LIFETIME_DAYS = _int_env("SESSION_LIFETIME_DAYS", 14)
+
+# [EN] Send the session cookie over HTTPS only. Must stay false for local http
+# development (python3 wsgi.py on 127.0.0.1:5000, docker compose on
+# localhost:8000), and MUST be true on the server (nginx terminates TLS there).
+#
+# Why the default is still false, plus a warning, rather than true: a wrong
+# `true` over plain http breaks login *silently* — the browser never stores or
+# returns the cookie, so you land back on the login form with no error (see
+# AGENTS.md §4). Defaulting to true would therefore hand that footgun to every
+# local run and to the compose stack, which sets no SESSION_COOKIE_SECURE at
+# all. Instead, "not set anywhere" is treated as a distinct case from an
+# explicit "false" and is called out loudly on stderr (gunicorn error log /
+# journald), so a production deploy cannot forget it in silence. An explicit
+# `SESSION_COOKIE_SECURE=false` is a conscious choice and stays quiet.
+#
+# [RU] Отправлять cookie сессии только по HTTPS. Должно оставаться false для
+# локальной разработки по http (python3 wsgi.py на 127.0.0.1:5000, docker
+# compose на localhost:8000) и ОБЯЗАТЕЛЬНО true на сервере (TLS терминирует nginx).
+#
+# Почему по умолчанию всё же false плюс предупреждение, а не true: ошибочное
+# `true` поверх обычного http ломает вход *молча* — браузер не сохраняет и не
+# отправляет cookie, и вы возвращаетесь на форму входа без ошибки (см.
+# AGENTS.md §4). Значение true по умолчанию раздало бы эту мину каждому
+# локальному запуску и compose-стеку, где SESSION_COOKIE_SECURE не задан
+# вовсе. Поэтому "нигде не задано" отличается от явного "false" и громко
+# выводится в stderr (error-лог gunicorn / journald), так что продакшен-деплой
+# не сможет забыть об этом молча. Явное `SESSION_COOKIE_SECURE=false` — это
+# осознанный выбор, и он ничего не печатает.
+_SESSION_COOKIE_SECURE_RAW = os.environ.get("SESSION_COOKIE_SECURE")
+_SESSION_COOKIE_SECURE_VALUE = (_SESSION_COOKIE_SECURE_RAW or "").strip().lower()
+
+SESSION_COOKIE_SECURE = _SESSION_COOKIE_SECURE_VALUE in ("1", "true", "yes", "on")
+
+# [EN] Warn when the value is missing entirely, or is a typo we do not
+# recognise ("True!", "sure", "0n") — both leave the cookie non-Secure, and both
+# would otherwise pass unnoticed. An explicit false/0/no/off is silent.
+# [RU] Предупреждаем, когда значение отсутствует вовсе или содержит опечатку,
+# которую мы не распознаём ("True!", "sure", "0n") — и то и другое оставляет
+# cookie без Secure и иначе прошло бы незамеченным. Явное false/0/no/off молчит.
+if not SESSION_COOKIE_SECURE and _SESSION_COOKIE_SECURE_VALUE not in (
+    "0", "false", "no", "off",
+):
+    _reason_en = (
+        "is not set"
+        if _SESSION_COOKIE_SECURE_RAW is None
+        else f"has an unrecognised value {_SESSION_COOKIE_SECURE_RAW!r}"
+    )
+    _reason_ru = (
+        "не задан"
+        if _SESSION_COOKIE_SECURE_RAW is None
+        else f"содержит нераспознанное значение {_SESSION_COOKIE_SECURE_RAW!r}"
+    )
+    # [EN] Printed once, at import. stderr rather than `warnings` so no warning
+    # filter can hide it, and no logging config has to exist yet. It reaches the
+    # gunicorn error log under systemd and `docker compose logs app` in compose.
+    # [RU] Печатается один раз, при импорте. stderr, а не `warnings`, чтобы
+    # никакой фильтр предупреждений не смог это скрыть и чтобы не требовалась
+    # уже настроенная система логирования. Попадает в error-лог gunicorn под
+    # systemd и в `docker compose logs app` в compose.
+    print(
+        f"WARNING: SESSION_COOKIE_SECURE {_reason_en} — the session cookie will "
+        "be sent over plain HTTP and can be stolen in transit. Set "
+        "SESSION_COOKIE_SECURE=true in .env on any HTTPS deployment; set it "
+        "explicitly to false to silence this on a local http setup.\n"
+        f"ВНИМАНИЕ: SESSION_COOKIE_SECURE {_reason_ru} — cookie сессии будет "
+        "передаваться по обычному HTTP и может быть перехвачена. На любом "
+        "HTTPS-развёртывании задайте SESSION_COOKIE_SECURE=true в .env; для "
+        "локального http задайте явное false, чтобы убрать это сообщение.",
+        file=sys.stderr,
+    )
+
+# [EN] Invite links expire — an old link found in a chat log should not still
+# grant access.
+# [RU] Ссылки-приглашения истекают — старая ссылка, найденная в переписке, не
+# должна по-прежнему давать доступ.
+INVITE_TTL_HOURS = _int_env("INVITE_TTL_HOURS", 72)
+
+# [EN] Minimum password length enforced when an invite is accepted.
+# [RU] Минимальная длина пароля при принятии приглашения.
+PASSWORD_MIN_LENGTH = _int_env("PASSWORD_MIN_LENGTH", 10)
 
 PAGE_SIZE = 50

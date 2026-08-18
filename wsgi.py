@@ -8,8 +8,12 @@ The application itself is assembled in app/create_app(); see app/README-less
 layout: app/models (data), app/controllers (routes), app/templates +
 app/static (presentation).
 
-Settings (DB, access) are read from the .env in this same folder — see
-.env.example.
+Access is invite-only: every page requires a login session except the login form
+and an invite link. A fresh database has no accounts, so create the first one with
+    python3 -m scripts.manage_users set-password you@example.com --role admin
+
+Settings (DB, SECRET_KEY, session) are read from the .env in this same folder —
+see .env.example. The app refuses to start without PGPASSWORD or SECRET_KEY.
 
 Local run (Flask dev server):
     python3 wsgi.py
@@ -27,7 +31,12 @@ WSGI-точка входа для мини-страницы со списком 
 Само приложение собирается в app/create_app(); структура: app/models (данные),
 app/controllers (маршруты), app/templates + app/static (представление).
 
-Настройки (БД, доступ) берутся из .env в этой же папке — см. .env.example.
+Доступ только по приглашению: каждая страница требует сессию входа, кроме формы
+входа и ссылки-приглашения. В чистой базе аккаунтов нет, первый создаётся так:
+    python3 -m scripts.manage_users set-password you@example.com --role admin
+
+Настройки (БД, SECRET_KEY, сессия) берутся из .env в этой же папке — см.
+.env.example. Приложение не стартует без PGPASSWORD или SECRET_KEY.
 
 Локальный запуск (dev-сервер Flask):
     python3 wsgi.py

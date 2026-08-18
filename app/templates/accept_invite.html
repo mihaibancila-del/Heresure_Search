@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Set your password — Agents_Heresure{% endblock %}
+{% block body_class %}centered{% endblock %}
+
+{% block content %}
+<main class="card">
+  {% if invalid %}
+    {# [EN] One message for expired, already used, revoked and never existed —
+       telling them apart would confirm which tokens once existed.
+       [RU] Одно сообщение для истёкших, уже использованных, отозванных и никогда
+       не существовавших — различать их значило бы подтверждать, какие токены были. #}
+    <h1>This invite link is not valid</h1>
+    <p class="muted">
+      It may have expired, or it may already have been used. Ask an admin for a new one.
+    </p>
+    <p><a href="{{ url_for('auth.login') }}">Go to sign in</a></p>
+  {% else %}
+    <h1>Set your password</h1>
+    <p class="muted">
+      You were invited as <strong>{{ email }}</strong>. Choose a password to finish
+      setting up your account.
+    </p>
+
+    <form method="post" action="{{ url_for('auth.accept_invite', token=token) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" required autofocus
+             autocomplete="new-password" minlength="{{ password_min_length }}">
+
+      <label for="password_confirm">Repeat password</label>
+      <input type="password" id="password_confirm" name="password_confirm" required
+             autocomplete="new-password" minlength="{{ password_min_length }}">
+
+      <button type="submit" class="primary">Set password and sign in</button>
+    </form>
+
+    <p class="muted small">
+      At least {{ password_min_length }} characters. Nobody else can see what you choose.
+    </p>
+  {% endif %}
+</main>
+{% endblock %}
