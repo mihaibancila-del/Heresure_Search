@@ -108,8 +108,15 @@ def invite():
 @admin_required
 def revoke(user_id: int):
     with db.connection() as conn:
-        user_model.revoke_invite(conn, user_id)
-    flash("Invite revoked. The link no longer works.", "success")
+        removed = user_model.revoke_invite(conn, user_id)
+    # [EN] removed is 0 if the id was already accepted (a real account) or gone —
+    # revoke_invite refuses to delete anything with a password, so this stays safe.
+    # [RU] removed = 0, если id уже принят (реальный аккаунт) или отсутствует —
+    # revoke_invite не удаляет ничего с паролем, поэтому это остаётся безопасным.
+    if removed:
+        flash("Invite revoked and removed. The link no longer works.", "success")
+    else:
+        flash("Nothing to revoke — that account has already been accepted.", "error")
     return redirect(url_for("admin.users"))
 
 
@@ -132,11 +139,27 @@ def deactivate(user_id: int):
             flash("No such user.", "error")
             return redirect(url_for("admin.users"))
 
-        # [EN] Refuse to remove the last active admin — otherwise nobody can
-        # invite anyone again and the account system is unreachable.
+        # [EN] Refuse to remove the last active admin — otherwise nobody can invite
+        # anyone again and the account system is unreachable. The guard must only
+        # fire when THIS target is itself a counted active admin (admin + active +
+        # already accepted): a pending admin invite has no password, cannot log in,
+        # and is not counted, so deactivating it never removes the last real admin.
+        # Checking only role here was the bug — it blocked deactivating a pending
+        # co-admin while the count (accepted admins) was legitimately 1.
         # [RU] Отказываемся убирать последнего активного админа — иначе никто не
         # сможет больше никого пригласить, и система аккаунтов станет недоступной.
-        if target["role"] == "admin" and user_model.count_active_admins(conn) <= 1:
+        # Проверка должна срабатывать только если ИМЕННО этот target — учитываемый
+        # активный админ (admin + active + уже принявший приглашение): ожидающий
+        # админ-инвайт без пароля войти не может и не считается, поэтому его
+        # отключение не убирает последнего настоящего админа. Проверка только по
+        # role и была багом — она блокировала отключение ожидающего со-админа, пока
+        # счётчик (принятых админов) был законно равен 1.
+        target_is_counted_admin = (
+            target["role"] == "admin"
+            and target["is_active"]
+            and target["password_hash"] is not None
+        )
+        if target_is_counted_admin and user_model.count_active_admins(conn) <= 1:
             flash("This is the last active admin. Promote someone else first.", "error")
             return redirect(url_for("admin.users"))
 

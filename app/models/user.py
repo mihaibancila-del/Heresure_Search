@@ -204,19 +204,31 @@ def set_active(conn, user_id: int, is_active: bool) -> None:
         conn.commit()
 
 
-def revoke_invite(conn, user_id: int) -> None:
-    """[EN] Invalidates a pending invite link without deleting the row.
-    [RU] Делает ссылку-приглашение недействительной, не удаляя строку."""
+def revoke_invite(conn, user_id: int) -> int:
+    """[EN] Deletes a pending invite outright. Because an invite IS the user row,
+    a never-accepted invite has no password and no history to keep, so revoking it
+    removes it from the list entirely and frees the email to be invited again.
+
+    The `password_hash IS NULL` guard is load-bearing: it makes this DELETE
+    incapable of touching an account that has ever been accepted. Returns the
+    number of rows removed (0 if the id was already accepted or gone).
+
+    [RU] Полностью удаляет ожидающее приглашение. Поскольку приглашение ЭТО и есть
+    строка пользователя, у непринятого приглашения нет ни пароля, ни истории,
+    которые стоило бы хранить, поэтому отзыв убирает его из списка целиком и
+    освобождает email для повторного приглашения.
+
+    Условие `password_hash IS NULL` — несущее: оно делает этот DELETE неспособным
+    затронуть аккаунт, который когда-либо был принят. Возвращает число удалённых
+    строк (0, если id уже принят или отсутствует)."""
     with conn.cursor() as cur:
         cur.execute(
-            """
-            UPDATE users
-            SET invite_token_hash = NULL, invite_expires_at = NULL
-            WHERE id = %s AND password_hash IS NULL;
-            """,
+            "DELETE FROM users WHERE id = %s AND password_hash IS NULL;",
             (user_id,),
         )
+        removed = cur.rowcount
         conn.commit()
+        return removed
 
 
 def count_active_admins(conn) -> int:

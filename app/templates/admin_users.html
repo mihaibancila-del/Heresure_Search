@@ -57,25 +57,30 @@
         <td>{{ u.last_login_at.strftime('%Y-%m-%d %H:%M') if u.last_login_at else '—' }}</td>
         <td class="row-actions">
           {# [EN] Every state change is a POST with a CSRF token — a GET link would
-             let a crafted <img> tag deactivate a colleague.
+             let a crafted <img> tag act on a colleague. One action per row state:
+             a pending invite can only be revoked (deleted); an accepted account
+             can be deactivated or reactivated; your own row shows neither. Offering
+             both Revoke and Deactivate on a pending row was what let a pending
+             co-admin trip the last-admin guard.
              [RU] Каждое изменение состояния — POST с CSRF-токеном; ссылка по GET
-             позволила бы поддельному тегу <img> отключить коллегу. #}
-          {% if u.is_pending and u.is_active %}
+             позволила бы поддельному тегу <img> подействовать на коллегу. Одно
+             действие на состояние строки: ожидающее приглашение можно только
+             отозвать (удалить); принятый аккаунт — отключить или снова включить;
+             своя строка не показывает ничего. Показ и Revoke, и Deactivate на
+             ожидающей строке и позволял со-админу-инвайту задеть проверку
+             последнего админа. #}
+          {% if u.is_pending %}
             <form method="post" action="{{ url_for('admin.revoke', user_id=u.id) }}">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <button type="submit" class="linkish">Revoke invite</button>
+              <button type="submit" class="linkish danger">Revoke invite</button>
             </form>
-          {% endif %}
-
-          {% if u.is_active %}
-            {% if current_user().id != u.id %}
-              <form method="post" action="{{ url_for('admin.deactivate', user_id=u.id) }}">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button type="submit" class="linkish danger">Deactivate</button>
-              </form>
-            {% else %}
-              <span class="muted small">you</span>
-            {% endif %}
+          {% elif current_user().id == u.id %}
+            <span class="muted small">you</span>
+          {% elif u.is_active %}
+            <form method="post" action="{{ url_for('admin.deactivate', user_id=u.id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="linkish danger">Deactivate</button>
+            </form>
           {% else %}
             <form method="post" action="{{ url_for('admin.activate', user_id=u.id) }}">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
