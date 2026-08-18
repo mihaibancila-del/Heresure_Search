@@ -95,6 +95,46 @@ def invite():
     # как поле для копирования. Раздельная передача не смешивает URL с текстом, а
     # redirect (POST-redirect-GET) означает, что обновление страницы не создаст
     # второе приглашение.
+    #
+    # [EN] Known and accepted: flash() puts the raw token in the session cookie,
+    # which Flask signs but does NOT encrypt, so it is base64 plaintext for exactly
+    # one redirect cycle (the next response rewrites the cookie without it). This is
+    # not worth a server-side one-shot store, because every party who can read that
+    # cookie already holds something strictly better:
+    #   - XSS on this page reads the token straight out of the DOM — base.html
+    #     renders it in an <input> on purpose, so HttpOnly buys nothing here;
+    #   - anyone reading the browser profile or sniffing plain http (the
+    #     SESSION_COOKIE_SECURE=false case) also has the admin's own login cookie,
+    #     i.e. the power to mint fresh invites at will;
+    #   - nginx logs the request line, not Cookie headers — but it DOES log
+    #     /invite/<token> when the invitee clicks, and the admin pastes the same
+    #     link into Slack. Those two channels are longer-lived than this one and
+    #     are already accepted by the copy-paste design.
+    # The token is single-use, expires after INVITE_TTL_HOURS, and is revocable
+    # from this same page. Do not "fix" this by dropping the redirect — that is
+    # what stops a refresh from minting a second invite. A worker-local dict would
+    # be worse than useless: gunicorn runs several workers, so the follow-up GET
+    # would miss the store about half the time.
+    #
+    # [RU] Известно и принято: flash() кладёт сырой токен в cookie сессии, которую
+    # Flask подписывает, но НЕ шифрует, — то есть это открытый base64 ровно на один
+    # цикл редиректа (следующий ответ перезаписывает cookie без него). Отдельное
+    # серверное одноразовое хранилище того не стоит, потому что любой, кто может
+    # прочитать эту cookie, уже располагает чем-то заведомо более ценным:
+    #   - XSS на этой странице читает токен прямо из DOM — base.html намеренно
+    #     рисует его в <input>, поэтому HttpOnly здесь ничего не даёт;
+    #   - тот, кто читает профиль браузера или слушает обычный http (случай
+    #     SESSION_COOKIE_SECURE=false), имеет и cookie входа самого админа, то есть
+    #     возможность выпускать новые приглашения сколько угодно;
+    #   - nginx пишет в лог строку запроса, а не заголовки Cookie, — но он ПИШЕТ
+    #     /invite/<token>, когда приглашённый переходит по ссылке, и ту же ссылку
+    #     админ вставляет в Slack. Эти два канала живут дольше и уже приняты самой
+    #     схемой с копированием ссылки вручную.
+    # Токен одноразовый, истекает через INVITE_TTL_HOURS и отзывается с этой же
+    # страницы. Не «чините» это удалением редиректа — именно он не даёт обновлению
+    # страницы создать второе приглашение. Словарь в памяти воркера был бы только
+    # хуже: gunicorn запускает несколько воркеров, и следующий GET примерно в
+    # половине случаев не найдёт запись.
     flash(
         f"Invite created for {email} ({role}). It expires in "
         f"{config.INVITE_TTL_HOURS} hours.",

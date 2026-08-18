@@ -17,6 +17,7 @@ docker-compose environment: переопределяют файл без доп�
 """
 
 import os
+import sys
 from pathlib import Path
 
 # [EN] app/config.py -> the repo root is one level up. resolve() so a symlinked
@@ -121,12 +122,74 @@ def _int_env(name: str, default: int) -> int:
 SESSION_LIFETIME_DAYS = _int_env("SESSION_LIFETIME_DAYS", 14)
 
 # [EN] Send the session cookie over HTTPS only. Must stay false for local http
-# development, and MUST be true on the server (nginx terminates TLS there).
+# development (python3 wsgi.py on 127.0.0.1:5000, docker compose on
+# localhost:8000), and MUST be true on the server (nginx terminates TLS there).
+#
+# Why the default is still false, plus a warning, rather than true: a wrong
+# `true` over plain http breaks login *silently* — the browser never stores or
+# returns the cookie, so you land back on the login form with no error (see
+# AGENTS.md §4). Defaulting to true would therefore hand that footgun to every
+# local run and to the compose stack, which sets no SESSION_COOKIE_SECURE at
+# all. Instead, "not set anywhere" is treated as a distinct case from an
+# explicit "false" and is called out loudly on stderr (gunicorn error log /
+# journald), so a production deploy cannot forget it in silence. An explicit
+# `SESSION_COOKIE_SECURE=false` is a conscious choice and stays quiet.
+#
 # [RU] Отправлять cookie сессии только по HTTPS. Должно оставаться false для
-# локальной разработки по http и ОБЯЗАТЕЛЬНО true на сервере (TLS терминирует nginx).
-SESSION_COOKIE_SECURE = os.environ.get("SESSION_COOKIE_SECURE", "false").lower() in (
-    "1", "true", "yes", "on",
-)
+# локальной разработки по http (python3 wsgi.py на 127.0.0.1:5000, docker
+# compose на localhost:8000) и ОБЯЗАТЕЛЬНО true на сервере (TLS терминирует nginx).
+#
+# Почему по умолчанию всё же false плюс предупреждение, а не true: ошибочное
+# `true` поверх обычного http ломает вход *молча* — браузер не сохраняет и не
+# отправляет cookie, и вы возвращаетесь на форму входа без ошибки (см.
+# AGENTS.md §4). Значение true по умолчанию раздало бы эту мину каждому
+# локальному запуску и compose-стеку, где SESSION_COOKIE_SECURE не задан
+# вовсе. Поэтому "нигде не задано" отличается от явного "false" и громко
+# выводится в stderr (error-лог gunicorn / journald), так что продакшен-деплой
+# не сможет забыть об этом молча. Явное `SESSION_COOKIE_SECURE=false` — это
+# осознанный выбор, и он ничего не печатает.
+_SESSION_COOKIE_SECURE_RAW = os.environ.get("SESSION_COOKIE_SECURE")
+_SESSION_COOKIE_SECURE_VALUE = (_SESSION_COOKIE_SECURE_RAW or "").strip().lower()
+
+SESSION_COOKIE_SECURE = _SESSION_COOKIE_SECURE_VALUE in ("1", "true", "yes", "on")
+
+# [EN] Warn when the value is missing entirely, or is a typo we do not
+# recognise ("True!", "sure", "0n") — both leave the cookie non-Secure, and both
+# would otherwise pass unnoticed. An explicit false/0/no/off is silent.
+# [RU] Предупреждаем, когда значение отсутствует вовсе или содержит опечатку,
+# которую мы не распознаём ("True!", "sure", "0n") — и то и другое оставляет
+# cookie без Secure и иначе прошло бы незамеченным. Явное false/0/no/off молчит.
+if not SESSION_COOKIE_SECURE and _SESSION_COOKIE_SECURE_VALUE not in (
+    "0", "false", "no", "off",
+):
+    _reason_en = (
+        "is not set"
+        if _SESSION_COOKIE_SECURE_RAW is None
+        else f"has an unrecognised value {_SESSION_COOKIE_SECURE_RAW!r}"
+    )
+    _reason_ru = (
+        "не задан"
+        if _SESSION_COOKIE_SECURE_RAW is None
+        else f"содержит нераспознанное значение {_SESSION_COOKIE_SECURE_RAW!r}"
+    )
+    # [EN] Printed once, at import. stderr rather than `warnings` so no warning
+    # filter can hide it, and no logging config has to exist yet. It reaches the
+    # gunicorn error log under systemd and `docker compose logs app` in compose.
+    # [RU] Печатается один раз, при импорте. stderr, а не `warnings`, чтобы
+    # никакой фильтр предупреждений не смог это скрыть и чтобы не требовалась
+    # уже настроенная система логирования. Попадает в error-лог gunicorn под
+    # systemd и в `docker compose logs app` в compose.
+    print(
+        f"WARNING: SESSION_COOKIE_SECURE {_reason_en} — the session cookie will "
+        "be sent over plain HTTP and can be stolen in transit. Set "
+        "SESSION_COOKIE_SECURE=true in .env on any HTTPS deployment; set it "
+        "explicitly to false to silence this on a local http setup.\n"
+        f"ВНИМАНИЕ: SESSION_COOKIE_SECURE {_reason_ru} — cookie сессии будет "
+        "передаваться по обычному HTTP и может быть перехвачена. На любом "
+        "HTTPS-развёртывании задайте SESSION_COOKIE_SECURE=true в .env; для "
+        "локального http задайте явное false, чтобы убрать это сообщение.",
+        file=sys.stderr,
+    )
 
 # [EN] Invite links expire — an old link found in a chat log should not still
 # grant access.

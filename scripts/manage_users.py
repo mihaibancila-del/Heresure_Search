@@ -178,9 +178,25 @@ def _set_active(email: str, is_active: bool) -> int:
             print(f"No such user: {email}", file=sys.stderr)
             return 1
 
-        # [EN] Same guard as the admin page: never remove the last way in.
-        # [RU] Та же защита, что на админ-странице: не убирать последний вход.
-        if not is_active and row["role"] == "admin" and user_model.count_active_admins(conn) <= 1:
+        # [EN] Same guard as the admin page, and it must stay identical to it
+        # (app/controllers/admin.py, deactivate): never remove the last way in.
+        # It fires only when THIS target is itself a counted active admin —
+        # admin + active + already accepted — because count_active_admins()
+        # counts exactly those. A pending admin invite has no password, cannot
+        # log in and is not counted, so deactivating it removes nobody's access.
+        # [RU] Та же защита, что на админ-странице, и она должна оставаться
+        # идентичной ей (app/controllers/admin.py, deactivate): не убирать
+        # последний вход. Срабатывает только если ИМЕННО этот target —
+        # учитываемый активный админ (admin + active + уже принявший
+        # приглашение), потому что count_active_admins() считает именно таких.
+        # Ожидающий админ-инвайт без пароля войти не может и не считается,
+        # поэтому его отключение ни у кого не отбирает доступ.
+        target_is_counted_admin = (
+            row["role"] == "admin"
+            and row["is_active"]
+            and row["password_hash"] is not None
+        )
+        if not is_active and target_is_counted_admin and user_model.count_active_admins(conn) <= 1:
             print("Refusing to deactivate the last active admin.", file=sys.stderr)
             return 1
 

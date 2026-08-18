@@ -42,35 +42,100 @@ bp = Blueprint("auth", __name__)
 # email есть в команде.
 _LOGIN_FAILED = "Wrong email or password."
 
+# [EN] Endpoints that need NO per-request users row, so the guard can skip the
+# connection + SELECT entirely. Only `static` qualifies, and only because it
+# satisfies both conditions at once: it is in PUBLIC_ENDPOINTS (so g.user cannot
+# change whether it is allowed), and it renders no template — Flask serves the
+# file straight from app/static/, so nothing ever calls current_user(). Every
+# page load pulls several CSS/JS files, and each one was opening a brand-new
+# Postgres connection just to be thrown away.
+#
+# This set is NOT "the public endpoints". auth.login reads g.user to bounce an
+# already-signed-in visitor, and auth.login/auth.accept_invite both render
+# base.html, which calls current_user() to draw the nav bar — so they keep the
+# load. Anything not listed here (including request.endpoint None, i.e. a 404)
+# also keeps it: default deny is unchanged, this only removes work that could
+# have had no effect on the outcome.
+#
+# [RU] Эндпоинты, которым НЕ нужна строка users на каждый запрос, поэтому guard
+# может полностью пропустить подключение и SELECT. Подходит только `static`, и
+# только потому, что выполняются оба условия сразу: он есть в PUBLIC_ENDPOINTS
+# (значит g.user не влияет на то, разрешён ли он) и он не рендерит шаблон —
+# Flask отдаёт файл прямо из app/static/, поэтому current_user() никто не
+# вызывает. Каждая загрузка страницы тянет несколько файлов CSS/JS, и на каждый
+# открывалось новое соединение с Postgres только чтобы его сразу выбросить.
+#
+# Это НЕ "публичные эндпоинты". auth.login читает g.user, чтобы перенаправить уже
+# вошедшего посетителя, а auth.login и auth.accept_invite оба рендерят base.html,
+# который вызывает current_user() для шапки — поэтому загрузка у них остаётся.
+# Всё, чего здесь нет (включая request.endpoint None, то есть 404), тоже её
+# сохраняет: запрет по умолчанию не меняется, убрана только работа, которая всё
+# равно не могла повлиять на результат.
+_SKIP_USER_LOAD_ENDPOINTS = frozenset({"static"})
+
 
 def load_user_and_require_login():
     """[EN] Registered in create_app as the single app-wide before_request. Runs
     for EVERY request, in this order:
 
-      1. CSRF check on POSTs (before any state changes).
-      2. Load the session's user, if any, into g.user.
+      1. CSRF check on POSTs (before any state changes) — unconditionally, for
+         every endpoint, public ones included.
+      2. Load the session's user, if any, into g.user — unless the endpoint is
+         one of _SKIP_USER_LOAD_ENDPOINTS, where the row cannot affect anything.
       3. Deny the request unless the endpoint is public or a user is loaded.
 
     A signed cookie proves only that we issued the id; the row is re-read every
     request so that deactivating a user, or deleting them, takes effect on their
-    very next click rather than whenever the cookie happens to expire.
+    very next click rather than whenever the cookie happens to expire. That still
+    holds after the step-2 skip: the only skipped endpoint is `static`, which
+    grants no access to data and is reachable anonymously anyway, so a
+    deactivated user gains nothing from it — their next request to any real page
+    re-reads the row and ends the session.
 
     [RU] Регистрируется в create_app как единственный общий before_request.
     Выполняется для КАЖДОГО запроса в таком порядке:
 
-      1. Проверка CSRF на POST (до любых изменений состояния).
-      2. Загрузка пользователя из сессии, если он есть, в g.user.
+      1. Проверка CSRF на POST (до любых изменений состояния) — безусловно, для
+         каждого эндпоинта, включая публичные.
+      2. Загрузка пользователя из сессии, если он есть, в g.user — кроме
+         эндпоинтов из _SKIP_USER_LOAD_ENDPOINTS, где строка ни на что не влияет.
       3. Отказ, если эндпоинт не публичный и пользователь не загружен.
 
     Подписанная cookie доказывает лишь то, что id выдали мы; строка перечитывается
     на каждом запросе, чтобы отключение или удаление пользователя срабатывало на
-    следующем же его клике, а не когда истечёт cookie."""
+    следующем же его клике, а не когда истечёт cookie. Это остаётся верным и после
+    пропуска на шаге 2: единственный пропускаемый эндпоинт — `static`, он не даёт
+    доступа к данным и так открыт анонимно, поэтому отключённый пользователь
+    ничего от него не получает — на следующем же запросе к реальной странице
+    строка перечитывается и сессия закрывается."""
     g.user = None
 
+    # [EN] CSRF stays FIRST and unconditional. It must cover POSTs to the public
+    # endpoints too (auth.login, auth.accept_invite) — those are exactly the
+    # forms an attacker would target, and they change state. Never move this
+    # behind an endpoint check.
+    # [RU] CSRF остаётся ПЕРВЫМ и безусловным. Он должен покрывать и POST к
+    # публичным эндпоинтам (auth.login, auth.accept_invite) — именно эти формы
+    # атакующий и будет использовать, и именно они меняют состояние. Никогда не
+    # уводите эту проверку за условие по эндпоинту.
     if not check_csrf():
         # [EN] 400, and no hint about what to fix — a real form always has the field.
         # [RU] 400 и без подсказок — у настоящей формы поле всегда есть.
         return "Bad request (CSRF check failed).", 400
+
+    # [EN] is_public() is re-checked here on purpose, so PUBLIC_ENDPOINTS remains
+    # the single authentication boundary: if `static` were ever removed from it,
+    # this shortcut stops applying and the request falls through to the normal
+    # load-and-deny path instead of staying open on its own authority.
+    # [RU] is_public() здесь перепроверяется намеренно, чтобы PUBLIC_ENDPOINTS
+    # оставался единственной границей авторизации: если `static` когда-нибудь
+    # уберут оттуда, этот шорткат перестанет действовать и запрос уйдёт в обычный
+    # путь "загрузить и запретить", а не останется открытым сам по себе.
+    if request.endpoint in _SKIP_USER_LOAD_ENDPOINTS and auth_view.is_public(request.endpoint):
+        # [EN] Public AND template-free: no DB trip, g.user stays None, allowed.
+        # [RU] Публичный И без шаблона: без обращения к базе, g.user остаётся
+        # None, запрос разрешён.
+        return None
 
     user_id = auth_view.session_user_id()
     if user_id is not None:

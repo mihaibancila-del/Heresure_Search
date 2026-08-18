@@ -133,14 +133,44 @@ def safe_next_target(raw: str | None, fallback: str) -> str:
     another host. Without this check a crafted login link could send a user to an
     attacker's page after a successful login.
 
+    Two further rules, both rejecting outright rather than sanitising — a value
+    that looks hostile is never worth repairing:
+
+    * Control characters (anything below 0x20, plus 0x7f DEL) are rejected
+      anywhere in the value. Browsers *strip* tab, CR and LF from a URL before
+      resolving it, so "/\\t/evil.com" passes a naive prefix check and is then
+      re-formed into "//evil.com" — a protocol-relative URL to the attacker's
+      host. CR/LF are also the classic ingredient for response-header (CRLF)
+      injection once the value reaches a Location header.
+    * A backslash anywhere is rejected, not just as the second character. Several
+      browsers normalise "\\" to "/", so "/\\evil.com" and its variants can turn
+      into a protocol-relative URL too. Legitimate paths on this site never
+      contain one.
+
     [RU] Защита от открытого перенаправления для параметра ?next=. Разрешён только
     относительный путь на этом же сайте: он должен начинаться с одного "/" и не
     должен начинаться с "//" или "/\\" — браузеры считают их URL с относительным
     протоколом, ведущими на другой хост. Без этой проверки поддельная ссылка на
-    вход могла бы после успешного входа отправить пользователя на страницу атакующего."""
+    вход могла бы после успешного входа отправить пользователя на страницу атакующего.
+
+    Ещё два правила; оба отклоняют значение целиком, а не «чистят» его — значение,
+    выглядящее враждебным, чинить не нужно:
+
+    * Управляющие символы (всё ниже 0x20, а также 0x7f DEL) запрещены в любом
+      месте строки. Браузеры *вырезают* табуляцию, CR и LF из URL до его
+      разрешения, поэтому "/\\t/evil.com" проходит наивную проверку префикса, а
+      затем превращается в "//evil.com" — URL с относительным протоколом на хост
+      атакующего. Кроме того, CR/LF — классический материал для инъекции в
+      заголовки ответа (CRLF), когда значение попадает в заголовок Location.
+    * Обратный слэш запрещён в любой позиции, а не только вторым символом. Ряд
+      браузеров нормализует "\\" в "/", так что "/\\evil.com" и его варианты тоже
+      могут стать URL с относительным протоколом. В настоящих путях этого сайта
+      обратного слэша не бывает."""
     if not raw or not raw.startswith("/"):
         return fallback
-    if raw.startswith("//") or raw.startswith("/\\"):
+    if raw.startswith("//") or "\\" in raw:
+        return fallback
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in raw):
         return fallback
     return raw
 
