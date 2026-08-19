@@ -14,6 +14,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}Agents_Heresure{% endblock %}</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
+{# [EN] Page-specific styles go in their own file via this block, so main.css
+   stays the shared base and does not drift towards the 500-line limit.
+   [RU] Стили конкретных страниц подключаются здесь отдельными файлами, чтобы
+   main.css оставался общей основой и не приближался к лимиту 500 строк. #}
+{% block styles %}{% endblock %}
 </head>
 <body class="{% block body_class %}{% endblock %}">
 
@@ -21,6 +26,7 @@
 <nav class="topbar">
   <a class="brand" href="{{ url_for('licenses.index') }}">Agents_Heresure</a>
   <div class="topbar-right">
+    <a href="{{ url_for('imports.index') }}">Imports</a>
     {% if current_user().role == 'admin' %}
       <a href="{{ url_for('admin.users') }}">Users</a>
     {% endif %}

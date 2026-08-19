@@ -13,8 +13,11 @@ Working notes for AI agents on this project. Read this before making changes.
 responsibility, a feature), not at an arbitrary line number. This applies to
 every file: Python, HTML, CSS, SQL, shell, config, docs.
 
-Current state — the longest file is `scripts/parser.py` at 294 lines, so
-everything is within budget. Check before you finish:
+Current state — the longest file is `app/static/css/main.css` at 371 lines, so
+everything is within budget. Two seams already taken, follow them rather than
+letting a file grow: page-specific CSS goes in its own stylesheet via the `styles`
+block in `base.html` (see `imports.css`), and the changelog lives in
+`CHANGELOG.md`. Check before you finish:
 
 ```bash
 find . -path ./.git -prune -o -name '__pycache__' -prune -o -type f \
@@ -40,6 +43,9 @@ find . -path ./.git -prune -o -name '__pycache__' -prune -o -type f \
   what this layout removed.
 - **Never commit or push unless asked.** The working tree usually carries
   uncommitted edits from the maintainer; leave them alone.
+- **Linear project.** All Linear issues for this repo belong to the
+  **Heresure-Agent-Search** project on team Vocaledgesolutions. Always set
+  `project` when creating or updating an issue; never leave one project-less.
 
 ### ⚠️ Real personal data
 
@@ -73,33 +79,43 @@ app/
   __init__.py                 create_app() factory; registers THE auth before_request
   config.py                   THE config module: loads .env, exposes PG_*/session settings
   security.py                 password hashing + invite token primitives (no Flask, no SQL)
+  import_catalog.py           counties -> cities, licence categories -> TYCL descs
+  jobs.py                     spawns the import runner as a detached subprocess
   models/
     db.py                     psycopg2 connection + connection() context manager
     license.py                every SQL statement the web app runs against `licenses`
     user.py                   every SQL statement about accounts and invites
+    imports.py                every SQL statement about import settings and run history
   controllers/
     licenses.py               the `/` route, as a Flask blueprint
     auth.py                   /login, /logout, /invite/<token>, and the app-wide guard
     admin.py                  /admin/users — invite, revoke, deactivate (admin only)
+    imports.py                /imports history (all users) + run/filters/schedule (admin)
   views/
     auth.py                   PUBLIC_ENDPOINTS, session helpers, admin_required
     csrf.py                   hand-rolled synchroniser-token CSRF for all POSTs
-    filters.py                to_tel_href, registered as the `tel_href` Jinja filter
+    filters.py                Jinja filters: in_tz (app timezone), to_duration, to_tel_href
   templates/base.html         shared layout: topbar, flashes
   templates/index.html        the paginated table
   templates/login.html        sign-in form
   templates/accept_invite.html  invited user sets their own password
   templates/admin_users.html  account list + invite form
-  static/css/main.css
-  static/js/main.js           the stub "Send Email" toast + invite-link copy button
+  templates/imports.html      import status + run history
+  templates/import_settings.html  timezone + county/license filters + schedule
+  static/css/main.css         shared base; page CSS goes in its own file (`styles` block)
+  static/css/imports.css      imports pages only
+  static/js/main.js           toast, invite-link copy, import auto-refresh
 scripts/
-  parser.py                   daily ETL: download FL DFS registry → filter → load
+  parser.py                   ETL primitives: download → filter (filters passed in) → load
+  run_import.py               THE import entry point: run tracking, locking, --if-due schedule
   send_campaign.py            one-at-a-time outreach; flips checked = true after each send
   send_test_email.py          SMTP smoke test (no DB)
   manage_users.py             CLI accounts: bootstrap the first admin, invite, deactivate
+  audit_license_types.py      checks the licence-category mapping against the registry
 sql/
   create_table.sql            `licenses` schema; also compose's initdb script
   create_users_table.sql      `users` schema; compose initdb 02_, apply by hand elsewhere
+  create_imports_tables.sql   `import_settings` + `import_runs`; compose initdb 03_
   load_script.sql             insert-only-new loader invoked by parser.py via psql
   dedupe_licenses.sql         one-off maintenance, run by hand
 deploy/                       provision/update scripts, nginx conf, systemd units, runbook
@@ -116,6 +132,8 @@ Dockerfile docker-compose.yml .dockerignore
 | `app/views/` + templates | Formatting, session/CSRF helpers, decorators | Query the DB |
 | `app/config.py` | Reading `.env` and the environment | Import Flask or any model |
 | `app/security.py` | Password/token primitives | Import Flask, touch the DB or a request |
+| `app/import_catalog.py` | Filter reference data (counties, types) | Import Flask, touch the DB |
+| `app/jobs.py` | Spawning background processes | Import from `scripts/`, contain SQL |
 | `scripts/` | Operational one-shots | Be imported by the web app |
 
 Note the consequence for auth: the request guard has to read the `users` row on
@@ -127,7 +145,9 @@ every request, which is SQL, so it lives in `app/controllers/auth.py`
 ```bash
 python3 wsgi.py                                       # dev server, http://127.0.0.1:5000
 gunicorn -w 2 -b 127.0.0.1:8000 wsgi:app              # production (behind nginx)
-python3 -m scripts.parser                             # ETL
+python3 -m scripts.run_import                         # import now, recorded in history
+python3 -m scripts.run_import --trigger scheduled --if-due   # what the systemd timer runs
+python3 -m scripts.parser                             # same as run_import (kept for habit)
 python3 -m scripts.send_campaign --dry-run --limit 3  # safe preview
 python3 -m scripts.send_test_email                    # SMTP check
 docker compose up -d --build                          # full local stack + its own Postgres
@@ -198,6 +218,84 @@ Recorded so they are not silently reversed.
   same reason as `pg_password()`: `send_test_email.py` imports `app.config` for
   SMTP only and must not need it. `create_app()` calls it so the web app still
   fails fast.
+- **The web app SPAWNS the importer, it does not import it.** `app/jobs.py` runs
+  `python3 -m scripts.run_import` as a detached subprocess (`start_new_session=True`).
+  This is what lets the web app start an ETL without breaking the §2 rule that it
+  must never import `scripts/` — a subprocess is not an import. It also solves two
+  real problems: the work takes minutes (far longer than a request), and a detached
+  process survives a gunicorn worker restart mid-download. Progress comes back
+  through the `import_runs` table, not a return value. Do not "simplify" this into
+  a thread.
+- **`scripts/run_import.py` is the ONE import entry point.** The UI button, the
+  systemd timer and `python3 -m scripts.parser` all end up there, so run history,
+  locking and filter handling exist once. `parser.py` is now ETL primitives only
+  and holds no filter state; adding a second path that writes `licenses` directly
+  would mean imports that never appear in the history.
+- **Concurrent imports are blocked with a Postgres ADVISORY LOCK, not a status
+  column.** An advisory lock is released automatically when its connection dies,
+  so a killed process cannot leave behind a flag that blocks every future import.
+  The `status = 'running'` rows are for display, and are separately protected by a
+  heartbeat (see the trap below).
+- **The import schedule lives in the database, and systemd only POLLS.**
+  `agent-licence-parser.timer` fires every minute and runs
+  `run_import --if-due`, which reads `import_settings` and decides. systemd cannot
+  read Postgres, so a UI-configurable time can only be honoured by asking often
+  enough; a not-due poll is one small query, so per-minute is cheap and keeps the
+  lateness under a minute. `--if-due` compares wall-clock
+  time in the stored IANA zone, so 09:00 stays 09:00 across the DST switch — the
+  same property the old `OnCalendar=... America/New_York` gave us.
+- **ONE app-wide timezone (`import_settings.timezone`) governs both when the
+  schedule fires and how every timestamp is rendered.** These were separate at
+  first — the schedule was local while history printed raw `timestamptz`, which
+  psycopg2 returns in the SESSION zone (Etc/UTC). One page therefore showed "09:45"
+  for the schedule and "06:46" for the run it started. Every user-facing timestamp
+  now goes through the `in_tz` Jinja filter with this value. Never print a
+  `timestamptz` directly in a template.
+- **The timezone is passed to templates by the controller, not read as a Jinja
+  global.** Reading it is a DB query, and the view layer must not query the database
+  (§2). Any new page that shows a time has to fetch it and pass `tz=`.
+- **A schedule is only half the setup, so the app records whether anyone polls it.**
+  `run_import --if-due` writes `import_settings.last_poll_at` on every poll,
+  whatever it decides, and `/imports` warns when an enabled schedule has had no
+  poll for `POLLER_SILENT_AFTER`. Without this, "schedule enabled, nobody polling"
+  is indistinguishable from a working setup — which is exactly how the compose
+  stack shipped with dead schedule UI at first.
+- **The app does not write cron/systemd config, deliberately.** Exact-to-the-second
+  firing would mean the web app rewriting a crontab or a systemd override and
+  reloading it whenever someone saves the schedule — that needs privileges a web app
+  serving real personal data should not have, and it does not work in a container at
+  all. Polling every minute costs one small query and gets within a minute, which is
+  the right trade for a daily bulk import.
+- **compose has a `scheduler` service** running the same `--if-due` command as the
+  systemd timer, in a `sleep` loop. It exists because compose has neither systemd
+  nor cron, so without it a schedule saved locally would never fire. It polls
+  every 60s by default (`IMPORT_POLL_SECONDS`) rather than production's 900s, for
+  fast feedback; polling faster is safe because a slot runs once (`is_due` checks
+  the last scheduled start) and the advisory lock blocks overlap regardless.
+- **Licence filters are the DFS form's CATEGORIES, expanded to `License TYCL Desc`
+  values in `app/import_catalog.py`.** The two vocabularies are different and this
+  is the trap: the search form offers "Life & Annuity", the CSV column holds
+  "LIFE INCL VARIABLE ANNUITY" and ten other classes. Matching the label against
+  the column finds nothing, silently, and the import reports zero rows. The
+  runner MUST call `license_descs_for()`; never pass stored labels to
+  `filter_and_transform()` directly. `python3 -m scripts.audit_license_types`
+  re-checks the mapping against a real download and fails on any value in the file
+  that no category covers.
+- **Three categories map to nothing on purpose.** Insurance Agency, Adjusting Firm
+  and Debit Agent exist on the DFS form but have no individual-licence class —
+  agencies and firms are organisations and live in a different export. They stay in
+  the list so it matches the form, are disabled in the UI, and are rejected
+  server-side so a crafted POST cannot store one.
+- **Filter selections are stored as NAMES; the name → cities expansion lives in
+  code** (`app/import_catalog.py`). The database holds `{Broward, Miami-Dade}`,
+  not 71 city strings. A stored name that no longer resolves is reported in the run
+  log rather than silently matching nothing. Adding a county is a code change on
+  purpose: it needs its municipality list.
+- **A CSRF failure with no session redirects to login; with a session it is 400.**
+  The check itself stays first and unconditional (see the trap below) — only the
+  response is split. An expired session hitting any form is a routine timeout and
+  deserves "sign in again", not a bare 400 page; a mismatch while signed in is a
+  real anomaly and gets no hint.
 - **`user.force_set_password()` is not reachable from the web app.** It exists for
   `scripts/manage_users.py` as the break-glass path when every admin is locked
   out. Keep it out of any controller.
@@ -232,6 +330,38 @@ obvious error.
   `before_app_request` on a blueprint) that touches `g.user`, check the ordering —
   loading the user and enforcing the login are deliberately one function so they
   cannot be reordered relative to each other.
+- **A crashed import leaves a `status = 'running'` row.** Nothing marks it
+  finished, because the process that would have is gone. `active_run()` therefore
+  ignores rows whose `heartbeat_at` is older than
+  `app/models/imports.STALE_AFTER` (5 minutes), and `mark_stale_runs_failed()`
+  closes them out when the next run starts. If you lengthen the gap between
+  heartbeats in `run_import.py`, raise `STALE_AFTER` too — otherwise a slow but
+  healthy import gets declared dead and a second one is allowed to start
+  alongside it.
+- **`sql/load_script.sql` needs the `psql` binary, so an import cannot run where
+  psql is missing.** The container and the server have it; a Mac usually does not,
+  which means "Run import now" works in compose but fails from a locally-run
+  `python3 wsgi.py` with a `FileNotFoundError` recorded on the run. Set `PG_BIN`
+  in `.env` or `brew install libpq` if you need it locally.
+- **`filter_and_transform()` is a generator, so its totals come back through the
+  `counts` dict, not a return value.** A generator's `return` goes into
+  `StopIteration`, which the `for` loop that consumes it swallows. If you need
+  scanned/matched counts, pass `counts={}` and read it after the iteration is
+  finished — reading it early gives you a partial number.
+- **A scheduled import starts on the first poll AFTER its time, never exactly on
+  it.** The poll is every minute (systemd) or `IMPORT_POLL_SECONDS` (compose), so a
+  09:45 slot starts at 09:45:xx–09:46:00. This looks like "it didn't run" if you
+  watch the clock, which is why both the header and the settings page say so in
+  words. Do not try to make it exact by having the app write crontabs — see below.
+- **Enabling a schedule does nothing on its own.** Nothing inside the app runs on
+  a timer; a schedule is only honoured if `run_import --if-due` is being polled
+  from outside (compose `scheduler`, or the systemd timer). The banner on
+  `/imports` is the check — if it says nobody is polling, the schedule will not
+  fire no matter how it is configured.
+- **Editing import filters or the schedule changes nothing already in the table.**
+  The loader is insert-only-new, so narrowing the counties does not delete rows
+  imported under the old selection. Say so when someone asks why the row count did
+  not drop.
 - **Changing `SECRET_KEY` logs every user out**, including you, with no error —
   the cookies simply stop verifying. Generate it once per environment and leave it.
 - **`SESSION_COOKIE_SECURE=true` over plain HTTP looks like "login is broken".**
@@ -268,87 +398,16 @@ obvious error.
 
 ---
 
+---
+
 ## 5. Changes
 
-### 2026-08-18 — invite-only login (VOC-12)
+Moved to [`CHANGELOG.md`](CHANGELOG.md) — this file was approaching the 500-line
+rule in §1, and the changelog is the part that grows without bound. Add new
+entries there, newest first; keep §3 Decisions and §4 Traps here, because those
+are what you need *before* making a change rather than after.
 
-The site had **no authentication at all**: `BASIC_AUTH_USERS` was unset in `.env`,
-and both `deploy/README.md` and `provision.sh` instructed the operator to leave it
-that way, so ~64k real agent records were served to anyone with the URL. Replaced
-with session login, invite only.
-
-- **New:** `app/security.py`, `app/models/user.py`, `app/controllers/auth.py`,
-  `app/controllers/admin.py`, `app/views/csrf.py`, `sql/create_users_table.sql`,
-  `scripts/manage_users.py`, and the `base.html` / `login.html` /
-  `accept_invite.html` / `admin_users.html` templates.
-- **Removed:** `require_auth` and `BASIC_AUTH_USERS`. `app/views/auth.py` was
-  rewritten as session helpers + `PUBLIC_ENDPOINTS` + `admin_required`.
-- Access control moved from a per-route decorator to one app-wide
-  `before_request`, which also CSRF-checks every POST. Default deny.
-- `SECRET_KEY` is now required; `create_app()` fails fast on it like `PGPASSWORD`.
-- Session cookie: `HttpOnly`, `SameSite=Lax`, `Secure` (configurable), 14-day
-  permanent lifetime so a login survives a browser restart.
-- No new dependencies — hashing is `werkzeug.security` (bundled with Flask).
-- Compose gained a `02_create_users_table.sql` initdb mount and a dev `SECRET_KEY`.
-  **Existing databases need the SQL applied by hand** (initdb only runs on a fresh
-  volume — see the trap above).
-- Verified end-to-end against the compose database with a 47-check script: anonymous
-  denial on every route, CSRF rejection, single-use/expired/revoked invites,
-  case-insensitive login, wrong-password and unknown-email both 401, open-redirect
-  attempts on `?next=`, member vs admin separation, immediate effect of
-  deactivation, and last-admin/self-deactivate protection.
-
-### 2026-08-18 — flat layout → MVC
-
-Restructured the project from four root-level Python files into the layout in
-§2. The largest Python file went from 493 lines to 294, and the rendered HTML
-is byte-identical to before apart from `<style>`→`<link>` and inline→external
-`<script>` (verified by diffing both versions against the same database).
-
-- `app.py` (493 lines) split into `wsgi.py` + nine files under `app/`. The
-  275-line inline HTML string became `app/templates/index.html` +
-  `app/static/css/main.css` + `app/static/js/main.js`;
-  `render_template_string` → `render_template`.
-- `parser.py`, `send_campaign.py`, `send_test_email.py` → `scripts/` (git
-  tracked these as renames, so history is intact).
-- `create_table.sql`, `load_script.sql`, `dedupe_licenses.sql` → `sql/`.
-- Four duplicate copies of `load_env()` and three of `get_required()` collapsed
-  into `app/config.py`.
-- **Bug fixed:** `send_campaign.py` read `PGHOST`/`PGPORT`/`PGUSER`/
-  `PGDATABASE` at import, *before* its own `load_env()` ran in `main()`, so
-  `.env` was silently ignored for those four and it always hit
-  `localhost:5432/postgres`. It now honours `.env` — which means it may target
-  a **different database than before**. Always `--dry-run` first.
-- CWD-relative paths in `parser.py` anchored to `PROJECT_ROOT`; psql subprocess
-  given `cwd=` so the `\copy` works from any directory.
-- Entry point `app:app` → `wsgi:app`: updated in `Dockerfile`,
-  `deploy/agent-licence.service`. `deploy/agent-licence-parser.service` now runs
-  `-m scripts.parser`. Compose mount → `./sql/create_table.sql`.
-  `deploy/update.sh` gained `--delete` plus a `__pycache__` cleanup.
-- `README.md`, `deploy/README.md`, `.env.example` updated. `deploy/README.md`
-  gained a one-time server-migration section (reinstall both units and
-  `daemon-reload`, or gunicorn loads `app:app`, dies, and nginx returns 502).
-
-### Outstanding / known gaps
-
-- **No tests.** Verification is end-to-end and manual; see §2 and the
-  verification section of `deploy/README.md`. Highest-value first tests: the
-  anonymous-redirect / signed-in-200 pair (guards `PUBLIC_ENDPOINTS`), invite
-  single-use, and `to_tel_href` units. The VOC-12 work was verified with a
-  throwaway curl script; it was not kept, because a `tests/` directory needs the
-  `pyproject.toml` decision above to be revisited first.
-- **No password reset** (VOC-19). Recovery today is: deactivate the account, then
-  issue a fresh invite. `scripts/manage_users.py set-password` is the admin-side
-  equivalent.
-- **No login rate limiting.** Brute force is bounded only by scrypt's cost. Fine
-  for an invite-only tool behind nginx, but a `failed_attempts`/`locked_until`
-  pair on `users`, or a limit in nginx, would be the next hardening step.
-- **Deactivation ends access on the next request, but does not delete the row.**
-  There is no account-deletion path; `users` is append-mostly by design.
-- `sql/create_table.sql` has no index and no unique constraint on the dedupe key
-  (`"Full Name"` + `"Business Email"`), so the anti-join in `load_script.sql`
-  does the work.
-- The "Send Email" button is still a stub — it only shows a toast. Wiring it up
-  is the next feature, and is why the blueprint seam exists.
-- A password (`1560`) is in git history; rotated on the server but not purged
-  from history. See the end of `deploy/README.md`.
+[RU] Перенесено в [`CHANGELOG.md`](CHANGELOG.md) — этот файл подходил к лимиту в
+500 строк из §1, а именно журнал изменений растёт без ограничений. Новые записи
+добавляйте туда, новые сверху; §3 Решения и §4 Ловушки остаются здесь, потому что
+они нужны *до* изменения, а не после.

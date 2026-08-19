@@ -14,10 +14,10 @@ from datetime import timedelta
 from flask import Flask
 
 from app import config
-from app.controllers import admin, auth, licenses
+from app.controllers import admin, auth, imports, licenses
 from app.views.auth import current_user
 from app.views.csrf import csrf_token
-from app.views.filters import to_tel_href
+from app.views.filters import in_timezone, to_duration, to_tel_href
 
 
 def create_app() -> Flask:
@@ -52,6 +52,12 @@ def create_app() -> Flask:
     )
 
     app.jinja_env.filters["tel_href"] = to_tel_href
+    app.jinja_env.filters["duration"] = to_duration
+    # [EN] Every user-facing timestamp goes through this, with the app
+    # timezone passed in by the controller — see app/views/filters.py.
+    # [RU] Каждая пользовательская метка времени идёт через это, а часовой
+    # пояс приложения передаёт контроллер — см. app/views/filters.py.
+    app.jinja_env.filters["in_tz"] = in_timezone
     # [EN] Templates read the signed-in user and the CSRF token directly, so no
     # controller has to thread them through every render_template call.
     # [RU] Шаблоны читают вошедшего пользователя и CSRF-токен напрямую, поэтому
@@ -77,6 +83,7 @@ def create_app() -> Flask:
 
     app.register_blueprint(auth.bp)
     app.register_blueprint(admin.bp)
+    app.register_blueprint(imports.bp)
     app.register_blueprint(licenses.bp)
 
     return app

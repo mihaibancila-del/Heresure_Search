@@ -38,6 +38,28 @@ function copyInvite(btn) {
   }
 }
 
+// [EN] While an import is running, reload the page periodically so the status and
+// the log tail move without the user pressing anything. Driven by the
+// data-import-active attribute the template renders, so there is no inline script
+// and no polling on pages where nothing is happening.
+// A full reload (not fetch/JSON) is deliberate: the page is server-rendered, so
+// there is no second code path to keep in sync, and the request is cheap.
+// [RU] Пока идёт импорт, периодически перезагружаем страницу, чтобы статус и хвост
+// лога обновлялись без действий пользователя. Управляется атрибутом
+// data-import-active, который отдаёт шаблон, — поэтому нет инлайнового скрипта и нет
+// опроса на страницах, где ничего не происходит.
+// Полная перезагрузка (а не fetch/JSON) выбрана намеренно: страница рендерится на
+// сервере, поэтому не появляется второй путь исполнения, который надо
+// синхронизировать, а сам запрос дешёвый.
+const IMPORT_POLL_MS = 5000;
+
+document.addEventListener('DOMContentLoaded', () => {
+  const panel = document.querySelector('[data-import-active="1"]');
+  if (panel) {
+    setTimeout(() => window.location.reload(), IMPORT_POLL_MS);
+  }
+});
+
 function fallbackCopy(input, done) {
   input.select();
   try {

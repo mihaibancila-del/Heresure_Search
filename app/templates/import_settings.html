@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% block title %}Import settings — Agents_Heresure{% endblock %}
+{% block styles %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/imports.css') }}">
+{% endblock %}
+
+{% block content %}
+{% include "_scheduler_warning.html" %}
+<header>
+  <h1>Import settings</h1>
+  <div class="meta">
+    What gets imported, and when. Changes apply to the <em>next</em> import — they
+    never alter rows already in the table.
+    {% if settings.updated_by %}
+      Last changed by {{ settings.updated_by }} on
+      {{ settings.updated_at | in_tz(tz) }}.
+    {% endif %}
+  </div>
+</header>
+
+<section class="panel">
+  <h2>Timezone</h2>
+  <p class="muted small">
+    Used for two things: <strong>when the schedule fires</strong>, and
+    <strong>how every time in this app is displayed</strong> — the import history,
+    last sign-in, everything. Pick the zone your team works in.
+  </p>
+
+  <form method="post" action="{{ url_for('imports.save_timezone') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="inline-form">
+      <select name="timezone">
+        {% for zone in timezones %}
+          <option value="{{ zone }}"
+            {{ 'selected' if zone == settings.timezone else '' }}>{{ zone }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="primary">Save timezone</button>
+    </div>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Filters</h2>
+  <p class="muted small">
+    The source file is the Florida DFS registry, so every import is limited to
+    Florida. Within it, a licensee is imported when their mailing city is in one of
+    the selected counties <strong>and</strong> their license type is selected.
+  </p>
+
+  <form method="post" action="{{ url_for('imports.save_filters') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <div class="filter-grid">
+      <fieldset>
+        <legend>Counties</legend>
+        {% for name in county_names %}
+        <label class="check">
+          <input type="checkbox" name="counties" value="{{ name }}"
+                 {{ 'checked' if name in (settings.counties or []) else '' }}>
+          <span>{{ name }}</span>
+          <span class="muted small">({{ all_counties[name] | length }} cities)</span>
+        </label>
+        {% endfor %}
+      </fieldset>
+
+      <fieldset>
+        <legend>License types</legend>
+        {# [EN] These are the categories the DFS search form offers. Each covers
+           several licence classes in the export, so the count is shown the same way
+           counties show their city count. The three with no individual-licence class
+           are disabled rather than hidden, so the list still matches the DFS form.
+           [RU] Это категории, которые предлагает форма поиска DFS. Каждая покрывает
+           несколько классов лицензий в экспорте, поэтому число показано так же, как у
+           округов число городов. Три категории без класса индивидуальной лицензии
+           отключены, а не скрыты, чтобы список по-прежнему совпадал с формой DFS. #}
+        {% for t in license_types %}
+        {% set unavailable = t in unavailable_types %}
+        <label class="check {{ 'check-disabled' if unavailable else '' }}"
+               {% if unavailable %}title="Agencies and adjusting firms are organisations, not individuals, so they are not in this registry"{% endif %}>
+          <input type="checkbox" name="license_types" value="{{ t }}"
+                 {{ 'checked' if t in (settings.license_types or []) else '' }}
+                 {{ 'disabled' if unavailable else '' }}>
+          <span>{{ t }}</span>
+          {% if unavailable %}
+            <span class="muted small">(not individuals)</span>
+          {% else %}
+            <span class="muted small">({{ license_categories[t] | length }} class{{ '' if license_categories[t] | length == 1 else 'es' }})</span>
+          {% endif %}
+        </label>
+        {% endfor %}
+      </fieldset>
+    </div>
+
+    <button type="submit" class="primary">Save filters</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Schedule</h2>
+  <p class="muted small">
+    When enabled, the import runs once a day at the time below, in
+    <strong>{{ settings.timezone }}</strong> (change that above). The time is local
+    to that zone, so it stays correct across daylight-saving changes.
+  </p>
+
+  <form method="post" action="{{ url_for('imports.save_schedule') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <label class="check">
+      <input type="checkbox" name="schedule_enabled"
+             {{ 'checked' if settings.schedule_enabled else '' }}>
+      <span>Run automatically every day</span>
+    </label>
+
+    <div class="inline-form schedule-row">
+      <label for="schedule_time" class="inline-label">At</label>
+      <input type="time" id="schedule_time" name="schedule_time"
+             value="{{ settings.schedule_time.strftime('%H:%M') }}" required>
+      <span class="inline-label">{{ settings.timezone }}</span>
+
+      <button type="submit" class="primary">Save schedule</button>
+    </div>
+  </form>
+
+  {# [EN] The app cannot run itself on a timer — something outside it must poll.
+     Naming BOTH environments matters: the earlier wording said only "on the
+     server", which read as "not my problem" while testing locally, where nothing
+     was polling at all and an enabled schedule silently never fired. The banner at
+     the top of the page now also warns when no poller has checked in.
+     [RU] Приложение не может запускать себя по таймеру — опрашивать должно что-то
+     извне. Важно назвать ОБА окружения: прежняя формулировка упоминала только
+     "на сервере", и при локальной проверке это читалось как "меня не касается",
+     хотя локально не опрашивал никто и включённое расписание молча не срабатывало.
+     Баннер вверху страницы теперь также предупреждает, если опросчик не отмечался. #}
+  <p class="muted small note">
+    Something has to poll this schedule — the app cannot start itself on a timer, so
+    the import starts on the first check <em>after</em> the time above, not exactly
+    on it. Checks run every minute, so expect it to begin within about a minute.
+    Locally the poller is the <code>scheduler</code> service
+    (<code>docker compose up -d scheduler</code>, interval
+    <code>IMPORT_POLL_SECONDS</code>); on the server it is the
+    <code>agent-licence-parser.timer</code> systemd unit. See
+    <code>deploy/README.md</code> §8.
+  </p>
+</section>
+
+<p class="back-link"><a href="{{ url_for('imports.index') }}">&larr; Back to imports</a></p>
+{% endblock %}

@@ -25,6 +25,7 @@ services:
       # run once on first init, in filename order, to create the tables
       - ./sql/create_table.sql:/docker-entrypoint-initdb.d/01_create_table.sql:ro
       - ./sql/create_users_table.sql:/docker-entrypoint-initdb.d/02_create_users_table.sql:ro
+      - ./sql/create_imports_tables.sql:/docker-entrypoint-initdb.d/03_create_imports_tables.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-Agents_Heresure}"]
       interval: 5s
@@ -48,9 +49,70 @@ services:
       # [RU] Подписывает cookie сессии. Здесь значение только для разработки; на
       # сервере берётся из .env. Его смена разлогинивает всех.
       SECRET_KEY: ${SECRET_KEY:-heresure_dev_secret_not_for_production}
+      # [EN] Explicit false, not merely unset: this stack is plain http on
+      # localhost, so a non-Secure cookie is correct here, and saying so silences
+      # the "not set" warning app/config.py prints for deployments that forgot it.
+      # [RU] Явное false, а не просто отсутствие значения: этот стек — обычный http
+      # на localhost, поэтому cookie без Secure здесь уместна, а явное указание
+      # убирает предупреждение "не задан", которое app/config.py печатает для
+      # деплоев, где об этом забыли.
+      SESSION_COOKIE_SECURE: "false"
       # SMTP_* can be added here to run `python -m scripts.send_campaign` in-container
     ports:
       - "${APP_HOST_PORT:-8000}:8000"
+
+  # [EN] The scheduler. On the server this job belongs to systemd
+  # (agent-licence-parser.timer); compose has no systemd and no cron, so without
+  # this service a schedule saved in the UI would simply never fire — the settings
+  # page would look like it worked while nothing polled it.
+  #
+  # It is the SAME image and the SAME command the timer runs, just in a loop, so
+  # local behaviour matches production. `--if-due` is cheap when nothing is due:
+  # one small query, then exit.
+  #
+  # IMPORT_POLL_SECONDS defaults to 30 so a schedule you set locally starts within
+  # half a minute of it. Polling faster cannot cause double runs: a slot is only run
+  # once (is_due checks the last scheduled start) and an advisory lock blocks overlap
+  # regardless. Production polls every minute via systemd.
+  #
+  # [RU] Планировщик. На сервере эта задача принадлежит systemd
+  # (agent-licence-parser.timer); в compose нет ни systemd, ни cron, поэтому без
+  # этого сервиса расписание, сохранённое в интерфейсе, просто никогда бы не
+  # сработало — страница настроек выглядела бы рабочей, а опрашивать её было бы некому.
+  #
+  # Это ТОТ ЖЕ образ и ТА ЖЕ команда, что запускает таймер, только в цикле, поэтому
+  # локальное поведение совпадает с продакшеном. `--if-due` дёшев, когда ничего не
+  # нужно: один небольшой запрос и выход.
+  #
+  # IMPORT_POLL_SECONDS по умолчанию 30, чтобы заданное локально расписание
+  # стартовало в пределах полуминуты. Более частый опрос не приводит к двойным
+  # запускам: слот выполняется один раз (is_due смотрит на последний запуск по
+  # расписанию), а advisory lock в любом случае блокирует пересечение. В проде опрос
+  # раз в минуту через systemd.
+  scheduler:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      PGPORT: "5432"
+      PGUSER: ${POSTGRES_USER:-postgres}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-heresure_dev_pw}
+      PGDATABASE: ${POSTGRES_DB:-Agents_Heresure}
+      SECRET_KEY: ${SECRET_KEY:-heresure_dev_secret_not_for_production}
+      SESSION_COOKIE_SECURE: "false"
+      IMPORT_POLL_SECONDS: ${IMPORT_POLL_SECONDS:-30}
+    # [EN] `|| true` so one failed import never kills the loop; the failure is
+    # already recorded in import_runs and shown on /imports.
+    # [RU] `|| true`, чтобы один упавший импорт не убил цикл; ошибка и так записана
+    # в import_runs и видна на /imports.
+    command: >
+      sh -c 'while true; do
+               python3 -m scripts.run_import --trigger scheduled --if-due || true;
+               sleep "$${IMPORT_POLL_SECONDS}";
+             done'
+    restart: unless-stopped
 
 volumes:
   pgdata:

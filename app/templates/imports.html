@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block title %}Imports — Agents_Heresure{% endblock %}
+{% block styles %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/imports.css') }}">
+{% endblock %}
+
+{% block content %}
+{% include "_scheduler_warning.html" %}
+<header>
+  <h1>Imports</h1>
+  <div class="meta">
+    Past runs of the Florida DFS registry import, newest first.
+    {% if settings.schedule_enabled %}
+      Scheduled daily at {{ settings.schedule_time.strftime('%H:%M') }}, starting
+      within a minute of it.
+    {% else %}
+      Automatic runs are off — imports only happen when started here.
+    {% endif %}
+    {# [EN] State the zone once, plainly. Every time on this page is rendered in it,
+       so there is nothing left to convert in your head.
+       [RU] Указываем зону один раз и прямо. Всё время на этой странице отображается
+       в ней, поэтому пересчитывать в голове больше нечего. #}
+    <span class="tz-note">All times in {{ tz }}.</span>
+  </div>
+</header>
+
+{# [EN] data-import-active drives the auto-refresh in main.js. Rendering it as an
+   attribute rather than inline script keeps the CSP-friendly no-inline-JS style
+   the rest of the app uses.
+   [RU] data-import-active управляет автообновлением в main.js. Отдаём это
+   атрибутом, а не инлайновым скриптом, сохраняя принятый в приложении стиль без
+   инлайнового JS. #}
+<section class="panel status-panel" data-import-active="{{ '1' if active else '0' }}">
+  {% if active %}
+    <div class="status running">
+      <span class="spinner" aria-hidden="true"></span>
+      <div>
+        <strong>Import #{{ active.id }} is running</strong>
+        <div class="muted small">
+          Started {{ active.started_at | in_tz(tz) }}
+          by {{ active.started_by or 'the schedule' }}
+        </div>
+      </div>
+    </div>
+    {% if active.log %}
+      <pre class="run-log">{{ active.log.strip().split('\n')[-8:] | join('\n') }}</pre>
+    {% endif %}
+  {% else %}
+    <div class="status idle">
+      <div>
+        <strong>No import running</strong>
+        <div class="muted small">
+          {% if runs and runs[0].finished_at %}
+            Last run finished {{ runs[0].finished_at | in_tz(tz) }}.
+          {% else %}
+            No import has completed yet.
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  {% endif %}
+
+  {% if current_user().role == 'admin' %}
+    <div class="status-actions">
+      <form method="post" action="{{ url_for('imports.run') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="primary" {{ 'disabled' if active else '' }}>
+          {{ 'Import in progress…' if active else 'Run import now' }}
+        </button>
+      </form>
+      <a href="{{ url_for('imports.settings') }}">Filters &amp; schedule</a>
+    </div>
+  {% endif %}
+</section>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Started</th>
+        <th>Duration</th>
+        <th>Trigger</th>
+        <th>Status</th>
+        <th>Scanned</th>
+        <th>Matched</th>
+        <th>New rows</th>
+        <th>Filters used</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in runs %}
+      <tr>
+        <td>{{ r.id }}</td>
+        <td>
+          {{ r.started_at | in_tz(tz) }}
+          {% if r.started_by %}
+            <div class="muted small">{{ r.started_by }}</div>
+          {% endif %}
+        </td>
+        <td>{{ r.duration | duration }}</td>
+        <td>{{ r.trigger }}</td>
+        <td>
+          {% if r.is_stale %}
+            {# [EN] A row still marked running whose process stopped reporting.
+               [RU] Строка всё ещё в running, но её процесс перестал отчитываться. #}
+            <span class="badge false" title="The import process stopped reporting">
+              interrupted
+            </span>
+          {% elif r.status == 'running' %}
+            <span class="badge pending">running</span>
+          {% elif r.status == 'success' %}
+            <span class="badge true">success</span>
+          {% else %}
+            <span class="badge false" title="{{ r.error or '' }}">failed</span>
+          {% endif %}
+        </td>
+        <td>{{ '{:,}'.format(r.rows_scanned) if r.rows_scanned is not none else '—' }}</td>
+        <td>{{ '{:,}'.format(r.rows_matched) if r.rows_matched is not none else '—' }}</td>
+        <td>
+          {%- if r.rows_inserted is not none -%}
+            <strong>+{{ '{:,}'.format(r.rows_inserted) }}</strong>
+          {%- else -%}—{%- endif -%}
+        </td>
+        <td class="filters-cell" title="{{ (r.counties or []) | join(', ') }} · {{ (r.license_types or []) | join(', ') }}">
+          {{ (r.counties or []) | join(', ') or '—' }}
+          <div class="muted small">
+            {{ (r.license_types or []) | length }} license type(s)
+          </div>
+        </td>
+      </tr>
+      {% if r.error %}
+      <tr class="error-row">
+        <td></td>
+        <td colspan="8"><span class="error-text">{{ r.error }}</span></td>
+      </tr>
+      {% endif %}
+      {% else %}
+      <tr>
+        <td colspan="9" class="muted">
+          No imports have run yet.
+          {% if current_user().role == 'admin' %}
+            Use “Run import now” above.
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

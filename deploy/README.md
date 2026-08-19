@@ -8,9 +8,11 @@ and team access via login/password over HTTPS.
 - `wsgi.py` + `app/` — the Flask app, served as `wsgi:app`. Config (DB, auth)
   is read from `.env` by `app/config.py`; there's no longer a default database
   password.
-- `scripts/` — `parser.py` (daily load), `send_campaign.py`, `send_test_email.py`.
-  Run as modules from `/opt/agent_licence`, e.g. `python3 -m scripts.parser`.
-- `sql/` — `create_table.sql`, `load_script.sql`, `dedupe_licenses.sql`.
+- `scripts/` — `run_import.py` (the import entry point), `parser.py` (its ETL
+  primitives), `send_campaign.py`, `send_test_email.py`, `manage_users.py`.
+  Run as modules from `/opt/agent_licence`, e.g. `python3 -m scripts.run_import`.
+- `sql/` — `create_table.sql`, `create_users_table.sql`,
+  `create_imports_tables.sql`, `load_script.sql`, `dedupe_licenses.sql`.
 - `requirements.txt` — dependencies for the server.
 - `deploy/provision.sh` — one-time setup of a clean droplet (Postgres, nginx,
   firewall, system user, Postgres role and database).
@@ -93,6 +95,8 @@ invite-only and a restored dump may not contain a `users` table yet):
 ```bash
 sudo -u agentapp psql -h localhost -U agents_app -d Agents_Heresure \
   -f /opt/agent_licence/sql/create_users_table.sql
+sudo -u agentapp psql -h localhost -U agents_app -d Agents_Heresure \
+  -f /opt/agent_licence/sql/create_imports_tables.sql
 cd /opt/agent_licence && sudo -u agentapp .venv/bin/python -m scripts.manage_users \
   set-password you@example.com --role admin
 ```
@@ -153,10 +157,11 @@ sudo certbot --nginx -d <DROPLET_IP_WITH_DOTS>.sslip.io
 
 Certbot will add the TLS block itself and set up the http-to-https redirect.
 
-Done: `https://<IP>.sslip.io` is your site's address. It opens from any device
-by simply following the link, with no login or password. No domain was bought —
-`sslip.io` resolves `<IP>.sslip.io` to the droplet's IP for free, which is
-enough for certbot too (a real TLS certificate).
+Done: `https://<IP>.sslip.io` is your site's address. It opens from any device,
+but every page requires a login — access is invite-only, so sign in with the admin
+account created in step 3 and invite the rest of the team from `/admin/users`. No
+domain was bought — `sslip.io` resolves `<IP>.sslip.io` to the droplet's IP for
+free, which is enough for certbot too (a real TLS certificate).
 
 If you later want your own domain (e.g. `agents.yourcompany.com`) — just point
 an A record at the droplet's IP and reissue the certificate:
@@ -196,7 +201,7 @@ sudo cp /opt/agent_licence/deploy/agent-licence-parser.service /etc/systemd/syst
 sudo systemctl daemon-reload
 sudo systemctl restart agent-licence
 systemctl is-active agent-licence
-sudo systemctl start agent-licence-parser   # run the parser once by hand before the 09:00 timer fires
+sudo systemctl start agent-licence-parser   # one poll by hand; runs the import only if the schedule says it is due
 journalctl -u agent-licence-parser -n 30
 ```
 
@@ -204,29 +209,46 @@ If you deploy the code but leave the old unit in place, gunicorn is still told
 to load `app:app`; `app` is now a package with no module-level `app`, so the
 worker dies on boot, `Restart=on-failure` loops, and nginx returns 502.
 
-## 8. Daily loading of new agents (`scripts.parser` on a schedule)
+## 8. Scheduled loading of new agents (`scripts.run_import` on a schedule)
 
-The server has a systemd timer configured that every day at **9:00 New York
-time** (America/New_York, DST handled automatically) does the following on its
-own: downloads the fresh Florida DFS registry → filters by the conditions
-(Broward/Miami-Dade, life licenses) → adds to `licenses` only new agents
-(by the Full Name + Business Email pair) with `checked = false`. It doesn't
-touch existing rows or manually-set `checked`/`Personal Email`.
+The timer **no longer owns the time of day**. It polls every minute and runs
+`scripts.run_import --if-due`, which reads the schedule from the database
+(`import_settings`) and does nothing unless the configured slot has arrived. The
+schedule itself — on/off, time, timezone — is set in the app at
+`/imports/settings`, along with which counties and license types to import.
 
-One-time install (if you're setting up a new server — it's already installed on this one):
+When it does run: downloads the fresh Florida DFS registry → filters by the
+selected counties and license types → adds to `licenses` only new agents (by the
+Full Name + Business Email pair) with `checked = false`. It never touches existing
+rows or manually-set `checked`/`Personal Email`. Every run, manual or scheduled,
+is recorded and visible on `/imports`.
+
+Install or update the units:
 
 ```bash
 cp /opt/agent_licence/deploy/agent-licence-parser.service /opt/agent_licence/deploy/agent-licence-parser.timer /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable --now agent-licence-parser.timer
+systemctl restart agent-licence-parser.timer
 ```
 
+> **⚠️ Upgrading an existing server:** the unit files are NOT part of the rsynced
+> tree — `deploy/update.sh` only restarts the app service. Until you run the copy
+> above plus `daemon-reload`, the server keeps running the OLD unit, which fires
+> `-m scripts.parser` at a fixed 09:00 and ignores the schedule in the UI. You must
+> also apply `sql/create_imports_tables.sql` once (see §3) or every import fails
+> with a missing-table error.
+
 Handy commands:
-- When the next run is: `systemctl list-timers agent-licence-parser.timer`
-- Logs of the last run: `journalctl -u agent-licence-parser.service -n 50`
-- Run it right now, without waiting for 9 AM: `systemctl start agent-licence-parser.service`
-  (this is the same oneshot service the timer triggers; a status of "inactive (dead)"
-  after the run is normal and expected for a oneshot)
+- When the next poll is: `systemctl list-timers agent-licence-parser.timer`
+- Logs of the last poll/run: `journalctl -u agent-licence-parser.service -n 50`
+  (a poll that decides "not due" logs one line and exits 0 — that is normal)
+- Force a run now, ignoring the schedule:
+  `sudo -u agentapp /opt/agent_licence/.venv/bin/python3 -m scripts.run_import`
+  run from `/opt/agent_licence`. Or just press **Run import now** on `/imports`.
+- Why nothing ran: check the schedule is enabled on `/imports/settings`, then the
+  journal above — `--if-due` prints the reason it skipped (disabled, not yet due,
+  or already ran for that slot).
 
 ## ⚠️ About the leaked password `1560`
 
