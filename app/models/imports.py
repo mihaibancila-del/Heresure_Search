@@ -24,6 +24,14 @@ import psycopg2.extras
 # больше интервала между heartbeat в scripts/run_import.py.
 STALE_AFTER = "5 minutes"
 
+# [EN] How long without a poll before we conclude nobody is honouring the
+# schedule. Comfortably more than the 15-minute production poll interval, so a
+# healthy server never trips it, but short enough to notice within an hour.
+# [RU] Сколько времени без опроса, прежде чем решить, что расписание никто не
+# соблюдает. Заметно больше 15-минутного интервала опроса в проде, поэтому
+# здоровый сервер сюда не попадает, но достаточно мало, чтобы заметить за час.
+POLLER_SILENT_AFTER = "45 minutes"
+
 
 def _dict_cursor(conn):
     return conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -58,6 +66,41 @@ def get_settings(conn) -> dict:
         if row:
             return row
         cur.execute("SELECT * FROM import_settings WHERE id = 1;")
+        return cur.fetchone()
+
+
+def record_poll(conn) -> None:
+    """[EN] Called by `run_import --if-due` on EVERY poll, before it decides
+    anything. This is the app's only evidence that a scheduler exists at all: the
+    app cannot start itself on a timer, so an enabled schedule with nobody polling
+    would otherwise look exactly like a working one — which is precisely how a
+    schedule can appear to "just not run".
+    [RU] Вызывается `run_import --if-due` при КАЖДОМ опросе, до принятия решения.
+    Это единственное свидетельство для приложения, что планировщик вообще есть:
+    само себя по таймеру приложение запустить не может, поэтому включённое
+    расписание без опросчика выглядело бы точно как рабочее — именно так
+    расписание и может "просто не сработать"."""
+    with conn.cursor() as cur:
+        cur.execute("UPDATE import_settings SET last_poll_at = now() WHERE id = 1;")
+        conn.commit()
+
+
+def poller_status(conn) -> dict:
+    """[EN] Whether a scheduler has checked in recently. Returns last_poll_at plus
+    `silent` (never polled, or not within POLLER_SILENT_AFTER) so the UI can warn
+    that an enabled schedule will not actually fire.
+    [RU] Отмечался ли недавно планировщик. Возвращает last_poll_at и `silent`
+    (не опрашивал никогда или дольше POLLER_SILENT_AFTER), чтобы интерфейс мог
+    предупредить, что включённое расписание на самом деле не сработает."""
+    with _dict_cursor(conn) as cur:
+        cur.execute(
+            f"""
+            SELECT last_poll_at,
+                   (last_poll_at IS NULL
+                    OR last_poll_at <= now() - INTERVAL '{POLLER_SILENT_AFTER}') AS silent
+            FROM import_settings WHERE id = 1;
+            """
+        )
         return cur.fetchone()
 
 

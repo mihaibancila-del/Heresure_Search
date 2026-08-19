@@ -1,0 +1,28 @@
+{#
+  [EN] Shown when a schedule is enabled but nothing has polled it recently. The
+  app cannot run itself on a timer, so an enabled schedule is only half the
+  setup — this makes the missing half visible instead of leaving it to be
+  discovered when an import silently never happens.
+  [RU] Показывается, когда расписание включено, но его давно никто не опрашивал.
+  Приложение не может запускать себя по таймеру, поэтому включённое расписание —
+  это лишь половина настройки; здесь недостающая половина становится видимой, а не
+  обнаруживается по молча не случившемуся импорту.
+#}
+{% if settings.schedule_enabled and poller and poller.silent %}
+<div class="flashes">
+  <div class="flash error">
+    <strong>The schedule is on, but nothing is running it.</strong>
+    {% if poller.last_poll_at %}
+      A scheduler last checked in on
+      {{ poller.last_poll_at.strftime('%Y-%m-%d %H:%M') }} UTC and has been quiet since.
+    {% else %}
+      No scheduler has ever checked in.
+    {% endif %}
+    Automatic imports will not happen until one is running:
+    <code>docker compose up -d scheduler</code> locally, or the
+    <code>agent-licence-parser.timer</code> systemd unit on the server
+    (see <code>deploy/README.md</code> §8). You can still use
+    <strong>Run import now</strong>.
+  </div>
+</div>
+{% endif %}

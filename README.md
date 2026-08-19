@@ -145,9 +145,20 @@ Or skip all of that and use the container stack, which creates the schemas on a
 fresh volume by itself:
 
 ```bash
-docker compose up -d --build     # app on http://localhost:8000, Postgres on 5434
+docker compose up -d --build     # app on :8000, Postgres on 5434, scheduler
 docker compose exec app python3 -m scripts.manage_users \
     set-password you@example.com --role admin
+```
+
+The stack has three services: `app`, `db`, and `scheduler`. The scheduler is what
+makes a saved schedule actually fire — it runs the same
+`run_import --if-due` command the systemd timer runs on the server, in a loop.
+It polls every `IMPORT_POLL_SECONDS` (default **60s** locally, vs 15 minutes in
+production), so a schedule you set is picked up within a minute:
+
+```bash
+IMPORT_POLL_SECONDS=15 docker compose up -d scheduler   # even snappier
+docker compose logs -f scheduler                        # watch it decide
 ```
 
 ## Imports
@@ -162,6 +173,12 @@ that is driven from the app, and every run is recorded.
   and shows the last few log lines.
 - **`/imports/settings`** (admin) — which **counties** and **license types** to
   import, and the **daily schedule** (on/off, time, timezone).
+
+The app cannot start itself on a timer, so a schedule only fires if something
+polls it: the `scheduler` compose service locally, or the
+`agent-licence-parser.timer` systemd unit on the server. Both run the same
+command. If nothing has polled recently, `/imports` shows a warning rather than
+letting an enabled schedule silently do nothing.
 
 The import is insert-only-new: it never overwrites or deletes existing rows, so
 manually-set `checked` / `Personal Email` values are safe, and narrowing the

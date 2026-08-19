@@ -61,5 +61,58 @@ services:
     ports:
       - "${APP_HOST_PORT:-8000}:8000"
 
+  # [EN] The scheduler. On the server this job belongs to systemd
+  # (agent-licence-parser.timer); compose has no systemd and no cron, so without
+  # this service a schedule saved in the UI would simply never fire — the settings
+  # page would look like it worked while nothing polled it.
+  #
+  # It is the SAME image and the SAME command the timer runs, just in a loop, so
+  # local behaviour matches production. `--if-due` is cheap when nothing is due:
+  # one small query, then exit.
+  #
+  # IMPORT_POLL_SECONDS defaults to 60 here rather than production's 900 so a
+  # schedule you set locally fires within a minute instead of up to 15. Polling
+  # faster cannot cause double runs: a slot is only run once (is_due checks the
+  # last scheduled start) and an advisory lock blocks overlap regardless.
+  #
+  # [RU] Планировщик. На сервере эта задача принадлежит systemd
+  # (agent-licence-parser.timer); в compose нет ни systemd, ни cron, поэтому без
+  # этого сервиса расписание, сохранённое в интерфейсе, просто никогда бы не
+  # сработало — страница настроек выглядела бы рабочей, а опрашивать её было бы некому.
+  #
+  # Это ТОТ ЖЕ образ и ТА ЖЕ команда, что запускает таймер, только в цикле, поэтому
+  # локальное поведение совпадает с продакшеном. `--if-due` дёшев, когда ничего не
+  # нужно: один небольшой запрос и выход.
+  #
+  # IMPORT_POLL_SECONDS по умолчанию 60, а не 900 как в проде, чтобы заданное
+  # локально расписание срабатывало в течение минуты, а не до 15. Более частый опрос
+  # не приводит к двойным запускам: слот выполняется один раз (is_due смотрит на
+  # последний запуск по расписанию), а advisory lock в любом случае блокирует
+  # пересечение.
+  scheduler:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      PGPORT: "5432"
+      PGUSER: ${POSTGRES_USER:-postgres}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-heresure_dev_pw}
+      PGDATABASE: ${POSTGRES_DB:-Agents_Heresure}
+      SECRET_KEY: ${SECRET_KEY:-heresure_dev_secret_not_for_production}
+      SESSION_COOKIE_SECURE: "false"
+      IMPORT_POLL_SECONDS: ${IMPORT_POLL_SECONDS:-60}
+    # [EN] `|| true` so one failed import never kills the loop; the failure is
+    # already recorded in import_runs and shown on /imports.
+    # [RU] `|| true`, чтобы один упавший импорт не убил цикл; ошибка и так записана
+    # в import_runs и видна на /imports.
+    command: >
+      sh -c 'while true; do
+               python3 -m scripts.run_import --trigger scheduled --if-due || true;
+               sleep "$${IMPORT_POLL_SECONDS}";
+             done'
+    restart: unless-stopped
+
 volumes:
   pgdata:

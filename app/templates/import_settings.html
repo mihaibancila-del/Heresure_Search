@@ -5,6 +5,7 @@
 {% endblock %}
 
 {% block content %}
+{% include "_scheduler_warning.html" %}
 <header>
   <h1>Import settings</h1>
   <div class="meta">
@@ -90,16 +91,23 @@
     </div>
   </form>
 
-  {# [EN] The app cannot run itself on a timer — a server-side timer has to poll.
-     Saying so here prevents "I enabled it but nothing ran" on a box where the
-     systemd timer was never installed.
-     [RU] Приложение не может запускать себя по таймеру — опрашивать должен таймер
-     на сервере. Упоминание здесь предотвращает "я включил, но ничего не
-     запустилось" на машине, где таймер systemd не установили. #}
+  {# [EN] The app cannot run itself on a timer — something outside it must poll.
+     Naming BOTH environments matters: the earlier wording said only "on the
+     server", which read as "not my problem" while testing locally, where nothing
+     was polling at all and an enabled schedule silently never fired. The banner at
+     the top of the page now also warns when no poller has checked in.
+     [RU] Приложение не может запускать себя по таймеру — опрашивать должно что-то
+     извне. Важно назвать ОБА окружения: прежняя формулировка упоминала только
+     "на сервере", и при локальной проверке это читалось как "меня не касается",
+     хотя локально не опрашивал никто и включённое расписание молча не срабатывало.
+     Баннер вверху страницы теперь также предупреждает, если опросчик не отмечался. #}
   <p class="muted small note">
-    Requires the <code>agent-licence-parser.timer</code> systemd unit to be
-    installed and enabled on the server; it polls every 15 minutes and starts the
-    import when this schedule says it is due. See <code>deploy/README.md</code>.
+    Something has to poll this schedule — the app cannot start itself on a timer.
+    Locally that is the <code>scheduler</code> service
+    (<code>docker compose up -d scheduler</code>, polls every
+    <code>IMPORT_POLL_SECONDS</code>, default 60s); on the server it is the
+    <code>agent-licence-parser.timer</code> systemd unit, polling every 15 minutes.
+    See <code>deploy/README.md</code> §8.
   </p>
 </section>
 

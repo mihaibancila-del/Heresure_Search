@@ -252,6 +252,13 @@ def main() -> int:
 
     if args.if_due:
         with db.connection() as conn:
+            # [EN] Record the poll BEFORE deciding, and regardless of the decision:
+            # this is what proves to the app that a scheduler is alive. A poll that
+            # says "not due" is still evidence, and is the common case.
+            # [RU] Фиксируем опрос ДО решения и независимо от него: именно это
+            # доказывает приложению, что планировщик жив. Опрос с вердиктом "не
+            # пора" — тоже свидетельство, и это обычный случай.
+            imports_model.record_poll(conn)
             settings = imports_model.get_settings(conn)
             last = imports_model.last_scheduled_start(conn)
         due, reason = is_due(settings, last)

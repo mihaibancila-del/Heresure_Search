@@ -57,10 +57,11 @@ def index():
         settings = imports_model.get_settings(conn)
         active = imports_model.active_run(conn)
         runs = imports_model.recent_runs(conn, limit=50)
+        poller = imports_model.poller_status(conn)
 
     return render_template(
         "imports.html", settings=settings, active=active, runs=runs,
-        counties=list(COUNTIES.keys()),
+        counties=list(COUNTIES.keys()), poller=poller,
     )
 
 
@@ -110,6 +111,7 @@ def run():
 def settings():
     with db.connection() as conn:
         current = imports_model.get_settings(conn)
+        poller = imports_model.poller_status(conn)
 
     # [EN] Show the saved timezone even when it is not one of COMMON_TIMEZONES, so
     # opening this page can never silently rewrite a value set via the CLI.
@@ -122,7 +124,7 @@ def settings():
     return render_template(
         "import_settings.html", settings=current,
         all_counties=COUNTIES, county_names=list(COUNTIES.keys()),
-        license_types=LICENSE_TYPES, timezones=zones,
+        license_types=LICENSE_TYPES, timezones=zones, poller=poller,
     )
 
 

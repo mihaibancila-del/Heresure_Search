@@ -61,6 +61,26 @@ VALUES (
 )
 ON CONFLICT (id) DO NOTHING;
 
+-- [EN] When a scheduler last asked "is an import due?". Written by
+-- `run_import --if-due` on every poll, whatever it decides. A schedule is only
+-- honoured if SOMETHING polls (systemd on the server, the `scheduler` service in
+-- compose), and nothing in the app can make that happen by itself — so the app
+-- records evidence that a poller exists and warns when it does not. Without this
+-- an enabled schedule that nobody polls looks identical to a working one.
+--
+-- Added after the fact, so ALTER for databases created before it existed.
+--
+-- [RU] Когда планировщик в последний раз спрашивал "пора ли импортировать?".
+-- Пишется `run_import --if-due` при каждом опросе, независимо от решения.
+-- Расписание соблюдается, только если КТО-ТО опрашивает (systemd на сервере,
+-- сервис `scheduler` в compose), и приложение само это обеспечить не может —
+-- поэтому оно фиксирует свидетельство наличия опросчика и предупреждает, когда
+-- его нет. Без этого включённое расписание, которое никто не опрашивает,
+-- выглядит точно так же, как работающее.
+--
+-- Добавлено позже, поэтому ALTER для баз, созданных до его появления.
+ALTER TABLE import_settings ADD COLUMN IF NOT EXISTS last_poll_at TIMESTAMPTZ;
+
 CREATE TABLE IF NOT EXISTS import_runs (
     id            BIGSERIAL   PRIMARY KEY,
     status        TEXT        NOT NULL DEFAULT 'running',

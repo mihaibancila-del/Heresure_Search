@@ -13,12 +13,11 @@ Working notes for AI agents on this project. Read this before making changes.
 responsibility, a feature), not at an arbitrary line number. This applies to
 every file: Python, HTML, CSS, SQL, shell, config, docs.
 
-Current state — the longest file is **this one**, at ~476 lines, so it is the next
-thing that must be split: the obvious seam is moving §5 Changes into a separate
-`CHANGELOG.md` and leaving §1–§4 here. Do that before adding another entry.
-Second longest is `app/static/css/main.css` at 371 — which is why page-specific CSS
-now goes in its own stylesheet via the `styles` block in `base.html` (see
-`imports.css`) rather than growing the shared one. Check before you finish:
+Current state — the longest file is `app/static/css/main.css` at 371 lines, so
+everything is within budget. Two seams already taken, follow them rather than
+letting a file grow: page-specific CSS goes in its own stylesheet via the `styles`
+block in `base.html` (see `imports.css`), and the changelog lives in
+`CHANGELOG.md`. Check before you finish:
 
 ```bash
 find . -path ./.git -prune -o -name '__pycache__' -prune -o -type f \
@@ -243,6 +242,18 @@ Recorded so they are not silently reversed.
   enough; 15 minutes is the resulting granularity. `--if-due` compares wall-clock
   time in the stored IANA zone, so 09:00 stays 09:00 across the DST switch — the
   same property the old `OnCalendar=... America/New_York` gave us.
+- **A schedule is only half the setup, so the app records whether anyone polls it.**
+  `run_import --if-due` writes `import_settings.last_poll_at` on every poll,
+  whatever it decides, and `/imports` warns when an enabled schedule has had no
+  poll for `POLLER_SILENT_AFTER`. Without this, "schedule enabled, nobody polling"
+  is indistinguishable from a working setup — which is exactly how the compose
+  stack shipped with dead schedule UI at first.
+- **compose has a `scheduler` service** running the same `--if-due` command as the
+  systemd timer, in a `sleep` loop. It exists because compose has neither systemd
+  nor cron, so without it a schedule saved locally would never fire. It polls
+  every 60s by default (`IMPORT_POLL_SECONDS`) rather than production's 900s, for
+  fast feedback; polling faster is safe because a slot runs once (`is_due` checks
+  the last scheduled start) and the advisory lock blocks overlap regardless.
 - **Filter selections are stored as NAMES; the name → cities expansion lives in
   code** (`app/import_catalog.py`). The database holds `{Broward, Miami-Dade}`,
   not 71 city strings. A stored name that no longer resolves is reported in the run
@@ -305,6 +316,11 @@ obvious error.
   `StopIteration`, which the `for` loop that consumes it swallows. If you need
   scanned/matched counts, pass `counts={}` and read it after the iteration is
   finished — reading it early gives you a partial number.
+- **Enabling a schedule does nothing on its own.** Nothing inside the app runs on
+  a timer; a schedule is only honoured if `run_import --if-due` is being polled
+  from outside (compose `scheduler`, or the systemd timer). The banner on
+  `/imports` is the check — if it says nobody is polling, the schedule will not
+  fire no matter how it is configured.
 - **Editing import filters or the schedule changes nothing already in the table.**
   The loader is insert-only-new, so narrowing the counties does not delete rows
   imported under the old selection. Say so when someone asks why the row count did
@@ -345,134 +361,16 @@ obvious error.
 
 ---
 
+---
+
 ## 5. Changes
 
-### 2026-08-18 — UI-driven imports: trigger, filters, schedule, history (VOC-13/14/18)
+Moved to [`CHANGELOG.md`](CHANGELOG.md) — this file was approaching the 500-line
+rule in §1, and the changelog is the part that grows without bound. Add new
+entries there, newest first; keep §3 Decisions and §4 Traps here, because those
+are what you need *before* making a change rather than after.
 
-Imports were a single hardcoded ETL on a fixed systemd timer, with no record of
-what had run. They are now configurable and visible from the app.
-
-- **New:** `sql/create_imports_tables.sql`, `app/import_catalog.py`, `app/jobs.py`,
-  `app/models/imports.py`, `app/controllers/imports.py`, `scripts/run_import.py`,
-  `app/templates/imports.html`, `app/templates/import_settings.html`,
-  `app/static/css/imports.css`, and `to_duration` in `app/views/filters.py`.
-- **VOC-13** "Run import now" on `/imports` (admin), spawned as a detached
-  subprocess; the page auto-refreshes while a run is active and shows the log tail.
-- **VOC-14** County and license-type filters on `/imports/settings`. The seeded
-  values reproduce the old hardcoded sets *exactly* (verified: all 71 city
-  spellings, same 4 license types), so applying this changes no behaviour until
-  someone edits them. Palm Beach is available to opt into.
-- **VOC-18** Schedule (enable, time, IANA timezone) stored in `import_settings`.
-  `agent-licence-parser.timer` now polls every 15 minutes running
-  `run_import --if-due` instead of firing the parser at a fixed 09:00.
-- **New feature** `/imports` run history: status, trigger, who started it,
-  duration, rows scanned/matched/inserted, the filters used, and the error. Any
-  signed-in user can read it; only admins can run or reconfigure.
-- `scripts/parser.py` lost its module-level `LIFE_DESCS`/`*_CITIES` constants;
-  `filter_and_transform()` takes the filters as arguments and reports totals
-  through a `counts` dict. `main()` delegates to `run_import` so a hand-run import
-  is recorded like any other.
-- Also fixed: a CSRF failure from an expired session returned a bare 400 on every
-  form in the app; it now redirects to login with an explanation (a mismatch while
-  signed in still returns 400).
-- **⚠️ Server action required:** the systemd units changed, and units are not
-  rsynced (see §4) — reinstall both and `daemon-reload`, or the old 09:00
-  `-m scripts.parser` command keeps running. Also apply
-  `sql/create_imports_tables.sql` to the existing database.
-- Verified against a throwaway database (never the compose one the app uses):
-  37 model/schedule checks, 34 HTTP/permission checks, a full runner run with the
-  download stubbed (including the real psql load, idempotent re-run, empty-filter
-  refusal and lock contention), plus the 47 VOC-12 auth checks re-run for regression.
-
-### 2026-08-18 — invite-only login (VOC-12)
-
-The site had **no authentication at all**: `BASIC_AUTH_USERS` was unset in `.env`,
-and both `deploy/README.md` and `provision.sh` instructed the operator to leave it
-that way, so ~64k real agent records were served to anyone with the URL. Replaced
-with session login, invite only.
-
-- **New:** `app/security.py`, `app/models/user.py`, `app/controllers/auth.py`,
-  `app/controllers/admin.py`, `app/views/csrf.py`, `sql/create_users_table.sql`,
-  `scripts/manage_users.py`, and the `base.html` / `login.html` /
-  `accept_invite.html` / `admin_users.html` templates.
-- **Removed:** `require_auth` and `BASIC_AUTH_USERS`. `app/views/auth.py` was
-  rewritten as session helpers + `PUBLIC_ENDPOINTS` + `admin_required`.
-- Access control moved from a per-route decorator to one app-wide
-  `before_request`, which also CSRF-checks every POST. Default deny.
-- `SECRET_KEY` is now required; `create_app()` fails fast on it like `PGPASSWORD`.
-- Session cookie: `HttpOnly`, `SameSite=Lax`, `Secure` (configurable), 14-day
-  permanent lifetime so a login survives a browser restart.
-- No new dependencies — hashing is `werkzeug.security` (bundled with Flask).
-- Compose gained a `02_create_users_table.sql` initdb mount and a dev `SECRET_KEY`.
-  **Existing databases need the SQL applied by hand** (initdb only runs on a fresh
-  volume — see the trap above).
-- Verified end-to-end against the compose database with a 47-check script: anonymous
-  denial on every route, CSRF rejection, single-use/expired/revoked invites,
-  case-insensitive login, wrong-password and unknown-email both 401, open-redirect
-  attempts on `?next=`, member vs admin separation, immediate effect of
-  deactivation, and last-admin/self-deactivate protection.
-
-### 2026-08-18 — flat layout → MVC
-
-Restructured the project from four root-level Python files into the layout in
-§2. The largest Python file went from 493 lines to 294, and the rendered HTML
-is byte-identical to before apart from `<style>`→`<link>` and inline→external
-`<script>` (verified by diffing both versions against the same database).
-
-- `app.py` (493 lines) split into `wsgi.py` + nine files under `app/`. The
-  275-line inline HTML string became `app/templates/index.html` +
-  `app/static/css/main.css` + `app/static/js/main.js`;
-  `render_template_string` → `render_template`.
-- `parser.py`, `send_campaign.py`, `send_test_email.py` → `scripts/` (git
-  tracked these as renames, so history is intact).
-- `create_table.sql`, `load_script.sql`, `dedupe_licenses.sql` → `sql/`.
-- Four duplicate copies of `load_env()` and three of `get_required()` collapsed
-  into `app/config.py`.
-- **Bug fixed:** `send_campaign.py` read `PGHOST`/`PGPORT`/`PGUSER`/
-  `PGDATABASE` at import, *before* its own `load_env()` ran in `main()`, so
-  `.env` was silently ignored for those four and it always hit
-  `localhost:5432/postgres`. It now honours `.env` — which means it may target
-  a **different database than before**. Always `--dry-run` first.
-- CWD-relative paths in `parser.py` anchored to `PROJECT_ROOT`; psql subprocess
-  given `cwd=` so the `\copy` works from any directory.
-- Entry point `app:app` → `wsgi:app`: updated in `Dockerfile`,
-  `deploy/agent-licence.service`. `deploy/agent-licence-parser.service` now runs
-  `-m scripts.parser`. Compose mount → `./sql/create_table.sql`.
-  `deploy/update.sh` gained `--delete` plus a `__pycache__` cleanup.
-- `README.md`, `deploy/README.md`, `.env.example` updated. `deploy/README.md`
-  gained a one-time server-migration section (reinstall both units and
-  `daemon-reload`, or gunicorn loads `app:app`, dies, and nginx returns 502).
-
-### Outstanding / known gaps
-
-- **No tests.** Verification is end-to-end and manual; see §2 and the
-  verification section of `deploy/README.md`. Highest-value first tests: the
-  anonymous-redirect / signed-in-200 pair (guards `PUBLIC_ENDPOINTS`), invite
-  single-use, and `to_tel_href` units. The VOC-12 work was verified with a
-  throwaway curl script; it was not kept, because a `tests/` directory needs the
-  `pyproject.toml` decision above to be revisited first.
-- **No password reset** (VOC-19). Recovery today is: deactivate the account, then
-  issue a fresh invite. `scripts/manage_users.py set-password` is the admin-side
-  equivalent.
-- **No login rate limiting.** Brute force is bounded only by scrypt's cost. Fine
-  for an invite-only tool behind nginx, but a `failed_attempts`/`locked_until`
-  pair on `users`, or a limit in nginx, would be the next hardening step.
-- **A running import cannot be cancelled from the UI.** There is no stop button and
-  no PID stored; you have to kill the process on the server, after which the
-  heartbeat goes stale and the run is closed as failed within 5 minutes.
-- **Import schedule granularity is 15 minutes**, set by the timer's poll interval,
-  and only one daily slot is supported. "Every N hours" would need a second field
-  and a change to `is_due()`.
-- **`import_runs.log` grows unbounded.** One row per run holding the whole progress
-  log; a few hundred bytes each, so it is not urgent, but nothing prunes old runs.
-- **The history page is not paginated** — it shows the newest 50 runs and there is
-  no way to reach older ones.
-- **Deactivation ends access on the next request, but does not delete the row.**
-  There is no account-deletion path; `users` is append-mostly by design.
-- `sql/create_table.sql` has no index and no unique constraint on the dedupe key
-  (`"Full Name"` + `"Business Email"`), so the anti-join in `load_script.sql`
-  does the work.
-- The "Send Email" button is still a stub — it only shows a toast. Wiring it up
-  is the next feature, and is why the blueprint seam exists.
-- A password (`1560`) is in git history; rotated on the server but not purged
-  from history. See the end of `deploy/README.md`.
+[RU] Перенесено в [`CHANGELOG.md`](CHANGELOG.md) — этот файл подходил к лимиту в
+500 строк из §1, а именно журнал изменений растёт без ограничений. Новые записи
+добавляйте туда, новые сверху; §3 Решения и §4 Ловушки остаются здесь, потому что
+они нужны *до* изменения, а не после.
