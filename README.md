@@ -88,7 +88,7 @@ licenses table (Postgres)
 | `app/` | The Flask application, laid out MVC-style (see below) |
 | `app/config.py` | Single source of configuration for the app *and* the scripts: loads `.env`, exposes the Postgres/auth settings |
 | `app/security.py` | Password hashing and invite-token primitives (no Flask, no SQL) |
-| `app/import_catalog.py` | Counties → city sets and the license-type list; shared by the app and the scripts |
+| `app/import_catalog.py` | Counties → city sets, and DFS licence categories → `License TYCL Desc` values; shared by the app and the scripts |
 | `app/jobs.py` | Spawns the import runner as a detached subprocess |
 | `app/models/` | Data layer — `db.py` (connections), `license.py`, `user.py` (accounts/invites), `imports.py` (settings + run history) |
 | `app/controllers/` | Request layer — `licenses.py` (`/`), `auth.py` (login/invite + the app-wide guard), `admin.py` (`/admin/users`), `imports.py` (`/imports`) |
@@ -98,6 +98,7 @@ licenses table (Postgres)
 | `scripts/run_import.py` | **The** import entry point: run tracking, advisory locking, `--if-due` scheduling |
 | `scripts/parser.py` | ETL primitives used by the runner: download → filter (filters passed in) → load |
 | `scripts/manage_users.py` | CLI accounts: bootstrap the first admin, invite, deactivate |
+| `scripts/audit_license_types.py` | Checks the licence-category mapping against the live registry; fails on any unmapped licence class |
 | `scripts/send_campaign.py` | Rate-limited, one-recipient-per-email outreach sender; marks `checked = true` after each send |
 | `scripts/send_test_email.py` | Sends one test email to yourself to verify SMTP creds work |
 | `sql/load_script.sql` | Insert-only-new logic used by `scripts/parser.py` (staging table → `licenses`) |
@@ -172,7 +173,13 @@ that is driven from the app, and every run is recorded.
   **Run import now** button; the page auto-refreshes while a run is in progress
   and shows the last few log lines.
 - **`/imports/settings`** (admin) — the **timezone**, which **counties** and
-  **license types** to import, and the **daily schedule** (on/off, time).
+  **licence categories** to import, and the **daily schedule** (on/off, time).
+
+Licence categories are the ones the DFS licensee-search form offers (Life &
+Annuity, Health, Adjuster, Property & Casualty, …). Each expands to the underlying
+`License TYCL Desc` values in the export — the count is shown next to each
+checkbox. Three categories (Insurance Agency, Adjusting Firm, Debit Agent) are
+organisations rather than individuals, so they are listed but disabled.
 
 The timezone is app-wide and does two jobs: the schedule fires by it, and **every
 time shown anywhere in the app is rendered in it**. A scheduled import starts on

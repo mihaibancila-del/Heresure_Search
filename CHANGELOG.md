@@ -10,6 +10,37 @@ future reader would otherwise have to reverse-engineer. Split out of `AGENTS.md`
 
 ---
 
+### 2026-08-19 — licence filters use the DFS form's categories
+
+The licence-type checkboxes offered six raw `License TYCL Desc` strings, four of
+which the tool happened to import. The real registry has **71 distinct**
+descriptions, and the DFS search form groups them into **20 categories** — which is
+the vocabulary a user recognises.
+
+- `app/import_catalog.py`: `LICENSE_TYPES` (a flat tuple of TYCL strings) replaced
+  by `LICENSE_CATEGORIES`, mapping each DFS category to the TYCL descriptions it
+  covers, plus `license_descs_for()` — the same name→values shape as COUNTIES.
+- **The mapping is load-bearing.** Filtering on a category label directly matches
+  nothing, silently: the label is "Life & Annuity", the column value is
+  "LIFE INCL VARIABLE ANNUITY". `scripts/run_import.py` now expands before
+  filtering, and warns if a selection resolves to no values at all.
+- Verified against the real 337MB registry: **71 of 71** descriptions mapped, zero
+  blind spots, zero stale entries.
+- New `scripts/audit_license_types.py` re-runs that check on demand (using the
+  already-downloaded CSV when present) and exits non-zero on any unmapped value, so
+  a licence class Florida adds later cannot stay invisible.
+- Insurance Agency, Adjusting Firm and Debit Agent have no individual-licence class;
+  they are listed but disabled, and rejected server-side.
+- Migration: the stored selection is rewritten from the old granular values to
+  category labels (guarded, idempotent, leaves label-based selections alone), so the
+  settings page does not come back with an empty selection.
+- Behaviour change, measured on the real file: Broward + Miami-Dade goes from
+  **68,451** matched rows (4 exact values) to **68,755** for the whole
+  "Life & Annuity" category — the extra 304 are nonresident and variable-annuity
+  classes with mailing addresses in those counties.
+- Suites: 48 model/schedule (up from 43), HTTP/permission updated for the new
+  vocabulary.
+
 ### 2026-08-19 — one app timezone for schedule and display
 
 Times in the UI were printed as raw `timestamptz`, which psycopg2 returns in the

@@ -53,7 +53,12 @@ import traceback
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from app.import_catalog import cities_for, unknown_counties, unknown_license_types
+from app.import_catalog import (
+    cities_for,
+    license_descs_for,
+    unknown_counties,
+    unknown_license_types,
+)
 from app.models import db, imports as imports_model
 from scripts import parser
 
@@ -91,10 +96,29 @@ def _resolve_filters(settings) -> tuple[frozenset[str], frozenset[str], list[str
         warnings.append(f"Ignoring unknown county {name!r} — no city list for it "
                         f"in app/import_catalog.py.")
     for name in unknown_license_types(types):
-        warnings.append(f"License type {name!r} is not in the catalogue; it will "
-                        f"match only if the registry contains it verbatim.")
+        warnings.append(f"Ignoring unknown license category {name!r} — not in "
+                        f"app/import_catalog.py.")
 
-    return cities_for(counties), frozenset(types), warnings
+    # [EN] Categories must be EXPANDED into `License TYCL Desc` values. The stored
+    # names are the DFS form's labels ("Life & Annuity"); the CSV column holds the
+    # licence class ("LIFE INCL VARIABLE ANNUITY"). Comparing the label against the
+    # column matches nothing, and would do so silently — hence license_descs_for().
+    # [RU] Категории нужно РАЗВЕРНУТЬ в значения `License TYCL Desc`. В базе хранятся
+    # названия с формы DFS ("Life & Annuity"), а в колонке CSV лежит класс лицензии
+    # ("LIFE INCL VARIABLE ANNUITY"). Сравнение названия с колонкой не даёт совпадений,
+    # причём молча — поэтому license_descs_for().
+    descs = license_descs_for(types)
+
+    # [EN] A selection that resolves to no values at all would scan 1.2M rows and
+    # import nothing. Name the categories, so the log says which ones are empty.
+    # [RU] Выбор, который не разворачивается ни в одно значение, просканирует 1.2 млн
+    # строк и ничего не импортирует. Называем категории, чтобы в логе было видно, какие
+    # из них пустые.
+    if types and not descs:
+        warnings.append(f"None of the selected categories ({', '.join(types)}) map to "
+                        f"any licence class in the individual registry.")
+
+    return cities_for(counties), descs, warnings
 
 
 def is_due(settings, last_run) -> tuple[bool, str]:

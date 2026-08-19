@@ -148,3 +148,10 @@ legend {
   color: var(--text-muted);
   white-space: nowrap;
 }
+
+/* [EN] A category the individual registry cannot supply. Dimmed and not clickable,
+   but still listed so the set matches the DFS search form.
+   [RU] Категория, которой нет в реестре физлиц. Приглушена и не кликабельна, но
+   остаётся в списке, чтобы набор совпадал с формой поиска DFS. */
+.check-disabled { cursor: default; color: var(--text-muted); }
+.check-disabled input { cursor: default; }

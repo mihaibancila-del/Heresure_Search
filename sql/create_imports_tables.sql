@@ -64,11 +64,55 @@ INSERT INTO import_settings (id, counties, license_types, schedule_enabled)
 VALUES (
     1,
     ARRAY['Broward', 'Miami-Dade'],
-    ARRAY['LIFE', 'LIFE & HEALTH', 'LIFE INCL VAR ANNUITY & HEALTH',
-          'LIFE INCL VARIABLE ANNUITY'],
+    -- [EN] A CATEGORY label from the DFS search form, not a licence class. The
+    -- expansion to the ~11 `License TYCL Desc` values it covers lives in
+    -- app/import_catalog.py. This used to seed the four resident life classes
+    -- directly; the category also covers the nonresident ones, which adds a few
+    -- hundred rows in the two default counties.
+    -- [RU] Название КАТЕГОРИИ с формы поиска DFS, а не класс лицензии. Разворот в
+    -- ~11 значений `License TYCL Desc`, которые она покрывает, живёт в
+    -- app/import_catalog.py. Раньше здесь засевались четыре резидентских класса life
+    -- напрямую; категория покрывает и нерезидентские, что добавляет несколько сотен
+    -- строк в двух округах по умолчанию.
+    ARRAY['Life & Annuity'],
     FALSE
 )
 ON CONFLICT (id) DO NOTHING;
+
+-- [EN] Migrate a stored selection from the old granular licence classes to the
+-- category labels. Before this change the UI offered `License TYCL Desc` values
+-- directly, so an existing row holds things like 'LIFE INCL VARIABLE ANNUITY',
+-- which no longer match any checkbox and would leave the settings page showing an
+-- empty selection. Runs only when such a value is present, so it is idempotent and
+-- never touches a selection already using labels.
+-- [RU] Переносит сохранённый выбор со старых конкретных классов лицензий на названия
+-- категорий. До этого изменения интерфейс предлагал значения `License TYCL Desc`
+-- напрямую, поэтому в существующей строке лежит что-то вроде
+-- 'LIFE INCL VARIABLE ANNUITY', что больше не соответствует ни одному чекбоксу и
+-- оставило бы страницу настроек с пустым выбором. Срабатывает только при наличии
+-- такого значения, поэтому идемпотентно и не трогает выбор, уже использующий названия.
+WITH mapping(old_value, new_value) AS (
+    VALUES ('LIFE',                           'Life & Annuity'),
+           ('LIFE & HEALTH',                   'Life & Annuity'),
+           ('LIFE INCL VAR ANNUITY & HEALTH',  'Life & Annuity'),
+           ('LIFE INCL VARIABLE ANNUITY',      'Life & Annuity'),
+           ('HEALTH',                          'Health'),
+           ('HEALTH & LIFE',                   'Health')
+),
+current_values AS (
+    SELECT unnest(license_types) AS value FROM import_settings WHERE id = 1
+)
+UPDATE import_settings
+SET license_types = (
+        SELECT array_agg(DISTINCT COALESCE(mapping.new_value, current_values.value))
+        FROM current_values
+        LEFT JOIN mapping ON mapping.old_value = current_values.value
+    )
+WHERE id = 1
+  AND EXISTS (
+      SELECT 1 FROM current_values
+      JOIN mapping ON mapping.old_value = current_values.value
+  );
 
 -- [EN] When a scheduler last asked "is an import due?". Written by
 -- `run_import --if-due` on every poll, whatever it decides. A schedule is only

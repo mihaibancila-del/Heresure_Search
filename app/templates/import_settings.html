@@ -66,11 +66,27 @@
 
       <fieldset>
         <legend>License types</legend>
+        {# [EN] These are the categories the DFS search form offers. Each covers
+           several licence classes in the export, so the count is shown the same way
+           counties show their city count. The three with no individual-licence class
+           are disabled rather than hidden, so the list still matches the DFS form.
+           [RU] Это категории, которые предлагает форма поиска DFS. Каждая покрывает
+           несколько классов лицензий в экспорте, поэтому число показано так же, как у
+           округов число городов. Три категории без класса индивидуальной лицензии
+           отключены, а не скрыты, чтобы список по-прежнему совпадал с формой DFS. #}
         {% for t in license_types %}
-        <label class="check">
+        {% set unavailable = t in unavailable_types %}
+        <label class="check {{ 'check-disabled' if unavailable else '' }}"
+               {% if unavailable %}title="Agencies and adjusting firms are organisations, not individuals, so they are not in this registry"{% endif %}>
           <input type="checkbox" name="license_types" value="{{ t }}"
-                 {{ 'checked' if t in (settings.license_types or []) else '' }}>
+                 {{ 'checked' if t in (settings.license_types or []) else '' }}
+                 {{ 'disabled' if unavailable else '' }}>
           <span>{{ t }}</span>
+          {% if unavailable %}
+            <span class="muted small">(not individuals)</span>
+          {% else %}
+            <span class="muted small">({{ license_categories[t] | length }} class{{ '' if license_categories[t] | length == 1 else 'es' }})</span>
+          {% endif %}
         </label>
         {% endfor %}
       </fieldset>

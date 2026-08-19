@@ -31,7 +31,12 @@ from zoneinfo import available_timezones
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 
 from app import jobs
-from app.import_catalog import COUNTIES, LICENSE_TYPES
+from app.import_catalog import (
+    COUNTIES,
+    LICENSE_CATEGORIES,
+    LICENSE_TYPES,
+    UNAVAILABLE_LICENSE_TYPES,
+)
 from app.models import db, imports as imports_model
 from app.views.auth import admin_required, current_user
 
@@ -131,7 +136,8 @@ def settings():
         "import_settings.html", settings=current,
         all_counties=COUNTIES, county_names=list(COUNTIES.keys()),
         license_types=LICENSE_TYPES, timezones=zones, poller=poller,
-        tz=current["timezone"],
+        tz=current["timezone"], license_categories=LICENSE_CATEGORIES,
+        unavailable_types=UNAVAILABLE_LICENSE_TYPES,
     )
 
 
@@ -145,7 +151,16 @@ def save_filters():
     # будет соответствовать при импорте, и поддельный POST не должен уметь сохранить
     # название округа, которое не разворачивается ни в один город.
     counties = [c for c in request.form.getlist("counties") if c in COUNTIES]
-    types = [t for t in request.form.getlist("license_types") if t in LICENSE_TYPES]
+    # [EN] Drop the categories with no individual-licence class as well as unknown
+    # ones. The form disables their checkboxes, but a hand-crafted POST could still
+    # store one, and it would sit in the settings looking active while contributing
+    # nothing to any import.
+    # [RU] Отбрасываем и категории без класса индивидуальной лицензии, и неизвестные.
+    # В форме их чекбоксы отключены, но поддельный POST всё равно мог бы сохранить
+    # такую категорию, и она выглядела бы в настройках активной, ничего не добавляя
+    # ни к одному импорту.
+    types = [t for t in request.form.getlist("license_types")
+             if t in LICENSE_TYPES and t not in UNAVAILABLE_LICENSE_TYPES]
 
     if not counties or not types:
         flash("Select at least one county and one license type.", "error")

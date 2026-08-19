@@ -79,7 +79,7 @@ app/
   __init__.py                 create_app() factory; registers THE auth before_request
   config.py                   THE config module: loads .env, exposes PG_*/session settings
   security.py                 password hashing + invite token primitives (no Flask, no SQL)
-  import_catalog.py           counties -> city sets, license types (shared with scripts/)
+  import_catalog.py           counties -> cities, licence categories -> TYCL descs
   jobs.py                     spawns the import runner as a detached subprocess
   models/
     db.py                     psycopg2 connection + connection() context manager
@@ -111,6 +111,7 @@ scripts/
   send_campaign.py            one-at-a-time outreach; flips checked = true after each send
   send_test_email.py          SMTP smoke test (no DB)
   manage_users.py             CLI accounts: bootstrap the first admin, invite, deactivate
+  audit_license_types.py      checks the licence-category mapping against the registry
 sql/
   create_table.sql            `licenses` schema; also compose's initdb script
   create_users_table.sql      `users` schema; compose initdb 02_, apply by hand elsewhere
@@ -271,6 +272,20 @@ Recorded so they are not silently reversed.
   every 60s by default (`IMPORT_POLL_SECONDS`) rather than production's 900s, for
   fast feedback; polling faster is safe because a slot runs once (`is_due` checks
   the last scheduled start) and the advisory lock blocks overlap regardless.
+- **Licence filters are the DFS form's CATEGORIES, expanded to `License TYCL Desc`
+  values in `app/import_catalog.py`.** The two vocabularies are different and this
+  is the trap: the search form offers "Life & Annuity", the CSV column holds
+  "LIFE INCL VARIABLE ANNUITY" and ten other classes. Matching the label against
+  the column finds nothing, silently, and the import reports zero rows. The
+  runner MUST call `license_descs_for()`; never pass stored labels to
+  `filter_and_transform()` directly. `python3 -m scripts.audit_license_types`
+  re-checks the mapping against a real download and fails on any value in the file
+  that no category covers.
+- **Three categories map to nothing on purpose.** Insurance Agency, Adjusting Firm
+  and Debit Agent exist on the DFS form but have no individual-licence class —
+  agencies and firms are organisations and live in a different export. They stay in
+  the list so it matches the form, are disabled in the UI, and are rejected
+  server-side so a crafted POST cannot store one.
 - **Filter selections are stored as NAMES; the name → cities expansion lives in
   code** (`app/import_catalog.py`). The database holds `{Broward, Miami-Dade}`,
   not 71 city strings. A stored name that no longer resolves is reported in the run
