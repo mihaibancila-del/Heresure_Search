@@ -94,14 +94,14 @@ app/
   views/
     auth.py                   PUBLIC_ENDPOINTS, session helpers, admin_required
     csrf.py                   hand-rolled synchroniser-token CSRF for all POSTs
-    filters.py                to_tel_href + to_duration, registered as Jinja filters
+    filters.py                Jinja filters: in_tz (app timezone), to_duration, to_tel_href
   templates/base.html         shared layout: topbar, flashes
   templates/index.html        the paginated table
   templates/login.html        sign-in form
   templates/accept_invite.html  invited user sets their own password
   templates/admin_users.html  account list + invite form
   templates/imports.html      import status + run history
-  templates/import_settings.html  county/license filters + schedule
+  templates/import_settings.html  timezone + county/license filters + schedule
   static/css/main.css         shared base; page CSS goes in its own file (`styles` block)
   static/css/imports.css      imports pages only
   static/js/main.js           toast, invite-link copy, import auto-refresh
@@ -236,18 +236,35 @@ Recorded so they are not silently reversed.
   The `status = 'running'` rows are for display, and are separately protected by a
   heartbeat (see the trap below).
 - **The import schedule lives in the database, and systemd only POLLS.**
-  `agent-licence-parser.timer` fires every 15 minutes and runs
+  `agent-licence-parser.timer` fires every minute and runs
   `run_import --if-due`, which reads `import_settings` and decides. systemd cannot
   read Postgres, so a UI-configurable time can only be honoured by asking often
-  enough; 15 minutes is the resulting granularity. `--if-due` compares wall-clock
+  enough; a not-due poll is one small query, so per-minute is cheap and keeps the
+  lateness under a minute. `--if-due` compares wall-clock
   time in the stored IANA zone, so 09:00 stays 09:00 across the DST switch — the
   same property the old `OnCalendar=... America/New_York` gave us.
+- **ONE app-wide timezone (`import_settings.timezone`) governs both when the
+  schedule fires and how every timestamp is rendered.** These were separate at
+  first — the schedule was local while history printed raw `timestamptz`, which
+  psycopg2 returns in the SESSION zone (Etc/UTC). One page therefore showed "09:45"
+  for the schedule and "06:46" for the run it started. Every user-facing timestamp
+  now goes through the `in_tz` Jinja filter with this value. Never print a
+  `timestamptz` directly in a template.
+- **The timezone is passed to templates by the controller, not read as a Jinja
+  global.** Reading it is a DB query, and the view layer must not query the database
+  (§2). Any new page that shows a time has to fetch it and pass `tz=`.
 - **A schedule is only half the setup, so the app records whether anyone polls it.**
   `run_import --if-due` writes `import_settings.last_poll_at` on every poll,
   whatever it decides, and `/imports` warns when an enabled schedule has had no
   poll for `POLLER_SILENT_AFTER`. Without this, "schedule enabled, nobody polling"
   is indistinguishable from a working setup — which is exactly how the compose
   stack shipped with dead schedule UI at first.
+- **The app does not write cron/systemd config, deliberately.** Exact-to-the-second
+  firing would mean the web app rewriting a crontab or a systemd override and
+  reloading it whenever someone saves the schedule — that needs privileges a web app
+  serving real personal data should not have, and it does not work in a container at
+  all. Polling every minute costs one small query and gets within a minute, which is
+  the right trade for a daily bulk import.
 - **compose has a `scheduler` service** running the same `--if-due` command as the
   systemd timer, in a `sleep` loop. It exists because compose has neither systemd
   nor cron, so without it a schedule saved locally would never fire. It polls
@@ -316,6 +333,11 @@ obvious error.
   `StopIteration`, which the `for` loop that consumes it swallows. If you need
   scanned/matched counts, pass `counts={}` and read it after the iteration is
   finished — reading it early gives you a partial number.
+- **A scheduled import starts on the first poll AFTER its time, never exactly on
+  it.** The poll is every minute (systemd) or `IMPORT_POLL_SECONDS` (compose), so a
+  09:45 slot starts at 09:45:xx–09:46:00. This looks like "it didn't run" if you
+  watch the clock, which is why both the header and the settings page say so in
+  words. Do not try to make it exact by having the app write crontabs — see below.
 - **Enabling a schedule does nothing on its own.** Nothing inside the app runs on
   a timer; a schedule is only honoured if `run_import --if-due` is being polled
   from outside (compose `scheduler`, or the systemd timer). The banner on

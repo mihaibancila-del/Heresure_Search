@@ -14,7 +14,7 @@
     <strong>The schedule is on, but nothing is running it.</strong>
     {% if poller.last_poll_at %}
       A scheduler last checked in on
-      {{ poller.last_poll_at.strftime('%Y-%m-%d %H:%M') }} UTC and has been quiet since.
+      {{ poller.last_poll_at | in_tz(settings.timezone) }} and has been quiet since.
     {% else %}
       No scheduler has ever checked in.
     {% endif %}

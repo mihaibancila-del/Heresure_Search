@@ -13,10 +13,32 @@
     never alter rows already in the table.
     {% if settings.updated_by %}
       Last changed by {{ settings.updated_by }} on
-      {{ settings.updated_at.strftime('%Y-%m-%d %H:%M') }}.
+      {{ settings.updated_at | in_tz(tz) }}.
     {% endif %}
   </div>
 </header>
+
+<section class="panel">
+  <h2>Timezone</h2>
+  <p class="muted small">
+    Used for two things: <strong>when the schedule fires</strong>, and
+    <strong>how every time in this app is displayed</strong> — the import history,
+    last sign-in, everything. Pick the zone your team works in.
+  </p>
+
+  <form method="post" action="{{ url_for('imports.save_timezone') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="inline-form">
+      <select name="timezone">
+        {% for zone in timezones %}
+          <option value="{{ zone }}"
+            {{ 'selected' if zone == settings.timezone else '' }}>{{ zone }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="primary">Save timezone</button>
+    </div>
+  </form>
+</section>
 
 <section class="panel">
   <h2>Filters</h2>
@@ -61,8 +83,9 @@
 <section class="panel">
   <h2>Schedule</h2>
   <p class="muted small">
-    When enabled, the import runs once a day at the time below. The time is local
-    to the chosen timezone, so it stays correct across daylight-saving changes.
+    When enabled, the import runs once a day at the time below, in
+    <strong>{{ settings.timezone }}</strong> (change that above). The time is local
+    to that zone, so it stays correct across daylight-saving changes.
   </p>
 
   <form method="post" action="{{ url_for('imports.save_schedule') }}">
@@ -78,14 +101,7 @@
       <label for="schedule_time" class="inline-label">At</label>
       <input type="time" id="schedule_time" name="schedule_time"
              value="{{ settings.schedule_time.strftime('%H:%M') }}" required>
-
-      <label for="schedule_timezone" class="inline-label">in</label>
-      <select id="schedule_timezone" name="schedule_timezone">
-        {% for tz in timezones %}
-          <option value="{{ tz }}"
-            {{ 'selected' if tz == settings.schedule_timezone else '' }}>{{ tz }}</option>
-        {% endfor %}
-      </select>
+      <span class="inline-label">{{ settings.timezone }}</span>
 
       <button type="submit" class="primary">Save schedule</button>
     </div>
@@ -102,12 +118,14 @@
      хотя локально не опрашивал никто и включённое расписание молча не срабатывало.
      Баннер вверху страницы теперь также предупреждает, если опросчик не отмечался. #}
   <p class="muted small note">
-    Something has to poll this schedule — the app cannot start itself on a timer.
-    Locally that is the <code>scheduler</code> service
-    (<code>docker compose up -d scheduler</code>, polls every
-    <code>IMPORT_POLL_SECONDS</code>, default 60s); on the server it is the
-    <code>agent-licence-parser.timer</code> systemd unit, polling every 15 minutes.
-    See <code>deploy/README.md</code> §8.
+    Something has to poll this schedule — the app cannot start itself on a timer, so
+    the import starts on the first check <em>after</em> the time above, not exactly
+    on it. Checks run every minute, so expect it to begin within about a minute.
+    Locally the poller is the <code>scheduler</code> service
+    (<code>docker compose up -d scheduler</code>, interval
+    <code>IMPORT_POLL_SECONDS</code>); on the server it is the
+    <code>agent-licence-parser.timer</code> systemd unit. See
+    <code>deploy/README.md</code> §8.
   </p>
 </section>
 

@@ -121,7 +121,7 @@ def is_due(settings, last_run) -> tuple[bool, str]:
     if not settings["schedule_enabled"]:
         return False, "Schedule is disabled."
 
-    tz_name = settings["schedule_timezone"] or "UTC"
+    tz_name = settings["timezone"] or "UTC"
     try:
         tz = ZoneInfo(tz_name)
     except (ZoneInfoNotFoundError, ValueError):

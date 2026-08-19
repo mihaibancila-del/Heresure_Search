@@ -11,11 +11,16 @@
   <div class="meta">
     Past runs of the Florida DFS registry import, newest first.
     {% if settings.schedule_enabled %}
-      Scheduled daily at {{ settings.schedule_time.strftime('%H:%M') }}
-      {{ settings.schedule_timezone }}.
+      Scheduled daily at {{ settings.schedule_time.strftime('%H:%M') }}, starting
+      within a minute of it.
     {% else %}
       Automatic runs are off — imports only happen when started here.
     {% endif %}
+    {# [EN] State the zone once, plainly. Every time on this page is rendered in it,
+       so there is nothing left to convert in your head.
+       [RU] Указываем зону один раз и прямо. Всё время на этой странице отображается
+       в ней, поэтому пересчитывать в голове больше нечего. #}
+    <span class="tz-note">All times in {{ tz }}.</span>
   </div>
 </header>
 
@@ -32,7 +37,7 @@
       <div>
         <strong>Import #{{ active.id }} is running</strong>
         <div class="muted small">
-          Started {{ active.started_at.strftime('%Y-%m-%d %H:%M') }}
+          Started {{ active.started_at | in_tz(tz) }}
           by {{ active.started_by or 'the schedule' }}
         </div>
       </div>
@@ -46,7 +51,7 @@
         <strong>No import running</strong>
         <div class="muted small">
           {% if runs and runs[0].finished_at %}
-            Last run finished {{ runs[0].finished_at.strftime('%Y-%m-%d %H:%M') }}.
+            Last run finished {{ runs[0].finished_at | in_tz(tz) }}.
           {% else %}
             No import has completed yet.
           {% endif %}
@@ -88,7 +93,7 @@
       <tr>
         <td>{{ r.id }}</td>
         <td>
-          {{ r.started_at.strftime('%Y-%m-%d %H:%M') }}
+          {{ r.started_at | in_tz(tz) }}
           {% if r.started_by %}
             <div class="muted small">{{ r.started_by }}</div>
           {% endif %}

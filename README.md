@@ -41,7 +41,7 @@ a server, migrating the database, updating a live deployment), see
                      │                     licenses table         │
                      │                          ▲                │
                      │                          │                │
-                     │   systemd timer (polls every 15 min)      │
+                     │   systemd timer (polls every minute)      │
                      │    └─▶ scripts.run_import --if-due          │
                      │        (schedule + filters read from the DB)│
                      └─────────────────────────────────────────┘
@@ -55,8 +55,8 @@ a server, migrating the database, updating a live deployment), see
   purchased — the site is reachable via a free `sslip.io` hostname that
   resolves to the droplet's IP (see `deploy/server.env`, not in git).
 - **Scheduled data refresh**: systemd timer `agent-licence-parser.timer` polls
-  every 15 minutes and runs the import when the schedule set in the app says it
-  is due (enable/time/timezone on `/imports/settings`, DST-aware). It's
+  every minute and runs the import when the schedule set in the app says it is due
+  (enable/time on `/imports/settings`, in the app timezone, DST-aware). It's
   independent of anyone's laptop being on.
 - **Firewall**: `ufw` — only SSH (22) and HTTP/HTTPS (80/443) are open.
 - **Access**: session login, **invite only**. There is no signup page — an
@@ -153,8 +153,8 @@ docker compose exec app python3 -m scripts.manage_users \
 The stack has three services: `app`, `db`, and `scheduler`. The scheduler is what
 makes a saved schedule actually fire — it runs the same
 `run_import --if-due` command the systemd timer runs on the server, in a loop.
-It polls every `IMPORT_POLL_SECONDS` (default **60s** locally, vs 15 minutes in
-production), so a schedule you set is picked up within a minute:
+It polls every `IMPORT_POLL_SECONDS` (default **30s** locally; production polls
+every minute via systemd), so a schedule you set is picked up promptly:
 
 ```bash
 IMPORT_POLL_SECONDS=15 docker compose up -d scheduler   # even snappier
@@ -171,8 +171,13 @@ that is driven from the app, and every run is recorded.
   error if it failed. Readable by any signed-in user. Admins also get a
   **Run import now** button; the page auto-refreshes while a run is in progress
   and shows the last few log lines.
-- **`/imports/settings`** (admin) — which **counties** and **license types** to
-  import, and the **daily schedule** (on/off, time, timezone).
+- **`/imports/settings`** (admin) — the **timezone**, which **counties** and
+  **license types** to import, and the **daily schedule** (on/off, time).
+
+The timezone is app-wide and does two jobs: the schedule fires by it, and **every
+time shown anywhere in the app is rendered in it**. A scheduled import starts on
+the first check after its time — checks run every minute — so a 09:45 schedule
+begins by about 09:46, not exactly at 09:45.
 
 The app cannot start itself on a timer, so a schedule only fires if something
 polls it: the `scheduler` compose service locally, or the

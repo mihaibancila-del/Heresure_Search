@@ -70,10 +70,10 @@ services:
   # local behaviour matches production. `--if-due` is cheap when nothing is due:
   # one small query, then exit.
   #
-  # IMPORT_POLL_SECONDS defaults to 60 here rather than production's 900 so a
-  # schedule you set locally fires within a minute instead of up to 15. Polling
-  # faster cannot cause double runs: a slot is only run once (is_due checks the
-  # last scheduled start) and an advisory lock blocks overlap regardless.
+  # IMPORT_POLL_SECONDS defaults to 30 so a schedule you set locally starts within
+  # half a minute of it. Polling faster cannot cause double runs: a slot is only run
+  # once (is_due checks the last scheduled start) and an advisory lock blocks overlap
+  # regardless. Production polls every minute via systemd.
   #
   # [RU] Планировщик. На сервере эта задача принадлежит systemd
   # (agent-licence-parser.timer); в compose нет ни systemd, ни cron, поэтому без
@@ -84,11 +84,11 @@ services:
   # локальное поведение совпадает с продакшеном. `--if-due` дёшев, когда ничего не
   # нужно: один небольшой запрос и выход.
   #
-  # IMPORT_POLL_SECONDS по умолчанию 60, а не 900 как в проде, чтобы заданное
-  # локально расписание срабатывало в течение минуты, а не до 15. Более частый опрос
-  # не приводит к двойным запускам: слот выполняется один раз (is_due смотрит на
-  # последний запуск по расписанию), а advisory lock в любом случае блокирует
-  # пересечение.
+  # IMPORT_POLL_SECONDS по умолчанию 30, чтобы заданное локально расписание
+  # стартовало в пределах полуминуты. Более частый опрос не приводит к двойным
+  # запускам: слот выполняется один раз (is_due смотрит на последний запуск по
+  # расписанию), а advisory lock в любом случае блокирует пересечение. В проде опрос
+  # раз в минуту через systemd.
   scheduler:
     build: .
     depends_on:
@@ -102,7 +102,7 @@ services:
       PGDATABASE: ${POSTGRES_DB:-Agents_Heresure}
       SECRET_KEY: ${SECRET_KEY:-heresure_dev_secret_not_for_production}
       SESSION_COOKIE_SECURE: "false"
-      IMPORT_POLL_SECONDS: ${IMPORT_POLL_SECONDS:-60}
+      IMPORT_POLL_SECONDS: ${IMPORT_POLL_SECONDS:-30}
     # [EN] `|| true` so one failed import never kills the loop; the failure is
     # already recorded in import_runs and shown on /imports.
     # [RU] `|| true`, чтобы один упавший импорт не убил цикл; ошибка и так записана

@@ -132,3 +132,19 @@ legend {
 .back-link { margin: 0 32px 32px; font-size: 13px; }
 .back-link a { color: var(--text-muted); text-decoration: none; }
 .back-link a:hover { color: var(--accent); }
+
+/* [EN] The "All times in <zone>" note in the page header. Quiet, but always
+   present — the whole confusion was not knowing which zone a number was in.
+   [RU] Примечание "Все времена в <зоне>" в шапке страницы. Негромко, но всегда на
+   месте — вся путаница была именно в том, что непонятно, в какой зоне число. */
+.tz-note {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #f4f4f5;
+  border: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}

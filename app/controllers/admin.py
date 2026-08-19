@@ -25,7 +25,7 @@ send mail, so it cannot possibly reach the real agents in the licenses table
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 
 from app import config
-from app.models import db, user as user_model
+from app.models import db, imports as imports_model, user as user_model
 from app.security import (
     hash_token,
     invite_expiry,
@@ -46,11 +46,17 @@ _ROLES = ("member", "admin")
 def users():
     with db.connection() as conn:
         rows = user_model.list_all(conn)
+        # [EN] The "last sign-in" column is a timestamp, so this page needs the app
+        # timezone too — otherwise it would be the one page still printing UTC.
+        # [RU] Колонка "последний вход" — метка времени, поэтому этой странице тоже
+        # нужен часовой пояс приложения, иначе она осталась бы единственной, где
+        # печатается UTC.
+        tz = imports_model.get_settings(conn)["timezone"]
     # [EN] invite_link is passed through one redirect via flash(), so it survives
     # the POST-redirect-GET without being stored anywhere.
     # [RU] invite_link передаётся через один redirect с помощью flash(), поэтому
     # переживает POST-redirect-GET и при этом нигде не сохраняется.
-    return render_template("admin_users.html", users=rows, roles=_ROLES)
+    return render_template("admin_users.html", users=rows, roles=_ROLES, tz=tz)
 
 
 @bp.route("/users/invite", methods=["POST"])

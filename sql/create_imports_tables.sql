@@ -41,7 +41,16 @@ CREATE TABLE IF NOT EXISTS import_settings (
     -- Нью-Йорку" должен переживать переход на летнее время, чего сохранённое
     -- смещение UTC не обеспечивает.
     schedule_time     TIME        NOT NULL DEFAULT '09:00',
-    schedule_timezone TEXT        NOT NULL DEFAULT 'America/New_York',
+    -- [EN] THE timezone this tool works in. It decides two things at once: when the
+    -- schedule fires, and how every timestamp in the UI is rendered. Those used to
+    -- disagree — the schedule was local while history was printed in UTC, so one
+    -- page showed 09:45 and 06:46 for the same moment.
+    -- [RU] ЕДИНЫЙ часовой пояс, в котором работает инструмент. Он определяет сразу
+    -- две вещи: когда срабатывает расписание и как отображается каждая метка
+    -- времени в интерфейсе. Раньше они расходились — расписание было локальным, а
+    -- история печаталась в UTC, поэтому одна страница показывала 09:45 и 06:46 для
+    -- одного и того же момента.
+    timezone          TEXT        NOT NULL DEFAULT 'America/New_York',
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_by        TEXT,
     CONSTRAINT import_settings_singleton CHECK (id = 1)
@@ -80,6 +89,26 @@ ON CONFLICT (id) DO NOTHING;
 --
 -- Добавлено позже, поэтому ALTER для баз, созданных до его появления.
 ALTER TABLE import_settings ADD COLUMN IF NOT EXISTS last_poll_at TIMESTAMPTZ;
+
+-- [EN] Rename schedule_timezone -> timezone for databases created before the column
+-- governed display as well. Postgres has no RENAME COLUMN IF EXISTS, hence the guard;
+-- the block is a no-op once renamed, so this file stays safe to re-run.
+-- [RU] Переименование schedule_timezone -> timezone для баз, созданных до того, как
+-- колонка стала управлять и отображением. В Postgres нет RENAME COLUMN IF EXISTS,
+-- поэтому нужна проверка; после переименования блок ничего не делает, так что файл
+-- по-прежнему безопасно запускать повторно.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'import_settings' AND column_name = 'schedule_timezone'
+    ) AND NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'import_settings' AND column_name = 'timezone'
+    ) THEN
+        ALTER TABLE import_settings RENAME COLUMN schedule_timezone TO timezone;
+    END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS import_runs (
     id            BIGSERIAL   PRIMARY KEY,

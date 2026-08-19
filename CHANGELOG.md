@@ -10,6 +10,34 @@ future reader would otherwise have to reverse-engineer. Split out of `AGENTS.md`
 
 ---
 
+### 2026-08-19 — one app timezone for schedule and display
+
+Times in the UI were printed as raw `timestamptz`, which psycopg2 returns in the
+session zone (Etc/UTC), while the schedule ran in a named local zone. The imports
+page therefore showed "Scheduled daily at 09:45" next to a run started "06:46" —
+the same instant, two zones, on one page.
+
+- `import_settings.schedule_timezone` renamed to `timezone`: it now decides both
+  when the schedule fires and how every timestamp is displayed. Guarded `DO` block
+  in `sql/create_imports_tables.sql` renames it on existing databases (Postgres has
+  no `RENAME COLUMN IF EXISTS`); the file stays safe to re-run.
+- New `in_tz` Jinja filter (`app/views/filters.py`). All seven timestamp sites now
+  use it — imports history and status, import settings, admin users' last sign-in,
+  and the scheduler warning, which had "UTC" hardcoded.
+- Timezone moved out of the Schedule panel into its own panel on
+  `/imports/settings`, because it governs the whole app rather than just the
+  schedule. `POST /imports/settings/timezone` added; the schedule form now saves
+  only the on/off flag and the time.
+- Pages state the zone explicitly ("All times in Europe/Bucharest", "Last sign-in
+  (Europe/Bucharest)") so no number is ambiguous.
+- Poll interval tightened from 15 minutes to **every minute** (systemd
+  `OnCalendar=*:*`, `RandomizedDelaySec=0`) and 60s to 30s in compose, so a slot
+  starts within about a minute of its time instead of up to 15. Both the header and
+  the settings page now say the start is "within a minute", not exact.
+- Verified: filter unit checks (UTC→Bucharest/New York, naive input, unknown zone
+  fallback), then every run on the live page asserted to show its local time and
+  NOT its UTC time. Suites re-run: 43 model/schedule, 37 HTTP/permission, 47 auth.
+
 ### 2026-08-18 — UI-driven imports: trigger, filters, schedule, history (VOC-13/14/18)
 
 Imports were a single hardcoded ETL on a fixed systemd timer, with no record of
@@ -126,9 +154,14 @@ is byte-identical to before apart from `<style>`→`<link>` and inline→externa
 - **A running import cannot be cancelled from the UI.** There is no stop button and
   no PID stored; you have to kill the process on the server, after which the
   heartbeat goes stale and the run is closed as failed within 5 minutes.
-- **Import schedule granularity is 15 minutes**, set by the timer's poll interval,
-  and only one daily slot is supported. "Every N hours" would need a second field
-  and a change to `is_due()`.
+- **A scheduled import starts up to a poll interval late** — about a minute in
+  production, `IMPORT_POLL_SECONDS` (30s) in compose. It is not exact by design; see
+  the decision on not writing cron config from the app. Only one daily slot is
+  supported: "every N hours" would need a second field and a change to `is_due()`.
+- **The timezone is app-wide, not per user.** Everyone sees times in the one zone
+  set on `/imports/settings`. A per-user display override would be additive — a
+  `users.timezone` column falling back to the app value — and does not require
+  changing anything built here.
 - **`import_runs.log` grows unbounded.** One row per run holding the whole progress
   log; a few hundred bytes each, so it is not urgent, but nothing prunes old runs.
 - **The history page is not paginated** — it shows the newest 50 runs and there is

@@ -59,9 +59,15 @@ def index():
         runs = imports_model.recent_runs(conn, limit=50)
         poller = imports_model.poller_status(conn)
 
+    # [EN] tz is passed to every template that prints a time, and used through the
+    # `in_tz` filter. Explicit rather than a Jinja global because reading it is a DB
+    # query, and the view layer must not query the database (AGENTS.md §2).
+    # [RU] tz передаётся в каждый шаблон, который печатает время, и используется через
+    # фильтр `in_tz`. Явно, а не глобалом Jinja, потому что чтение — это запрос к базе,
+    # а слой представления не должен обращаться к базе (AGENTS.md §2).
     return render_template(
         "imports.html", settings=settings, active=active, runs=runs,
-        counties=list(COUNTIES.keys()), poller=poller,
+        counties=list(COUNTIES.keys()), poller=poller, tz=settings["timezone"],
     )
 
 
@@ -118,13 +124,14 @@ def settings():
     # [RU] Показываем сохранённую зону, даже если её нет в COMMON_TIMEZONES, чтобы
     # открытие страницы не могло молча перезаписать значение, заданное через CLI.
     zones = list(COMMON_TIMEZONES)
-    if current["schedule_timezone"] not in zones:
-        zones.insert(0, current["schedule_timezone"])
+    if current["timezone"] not in zones:
+        zones.insert(0, current["timezone"])
 
     return render_template(
         "import_settings.html", settings=current,
         all_counties=COUNTIES, county_names=list(COUNTIES.keys()),
         license_types=LICENSE_TYPES, timezones=zones, poller=poller,
+        tz=current["timezone"],
     )
 
 
@@ -158,7 +165,6 @@ def save_filters():
 def save_schedule():
     enabled = request.form.get("schedule_enabled") == "on"
     at_time = (request.form.get("schedule_time") or "").strip()
-    timezone = (request.form.get("schedule_timezone") or "").strip()
 
     # [EN] <input type="time"> gives HH:MM, but a raw POST can give anything, and
     # this string goes into a TIME column.
@@ -168,23 +174,46 @@ def save_schedule():
         flash("Enter a valid time as HH:MM.", "error")
         return redirect(url_for("imports.settings"))
 
+    with db.connection() as conn:
+        imports_model.save_schedule(conn, enabled, at_time, current_user()["email"])
+        tz_name = imports_model.get_settings(conn)["timezone"]
+
+    if enabled:
+        flash(f"Schedule saved: daily at {at_time} {tz_name}. It starts within a "
+              f"minute of that time, not exactly on it.", "success")
+    else:
+        flash("Schedule disabled. Imports now only run when started by hand.",
+              "success")
+    return redirect(url_for("imports.settings"))
+
+
+@bp.route("/settings/timezone", methods=["POST"])
+@admin_required
+def save_timezone():
+    """[EN] The app-wide timezone. Separate from the schedule form because it does
+    two jobs: it decides when the schedule fires AND how every timestamp in the UI
+    is displayed. Bundling it into "Schedule" hid the second job, which is how the
+    history ended up readable only if you did UTC arithmetic in your head.
+    [RU] Общий часовой пояс приложения. Отделён от формы расписания, потому что
+    выполняет две задачи: определяет, когда срабатывает расписание, И как
+    отображается каждая метка времени в интерфейсе. Внутри блока "Расписание" вторая
+    задача была не видна — из-за этого историю можно было читать, только пересчитывая
+    UTC в голове."""
+    tz_name = (request.form.get("timezone") or "").strip()
+
     # [EN] Validated against the system tz database, not COMMON_TIMEZONES, so a
     # zone previously set via the CLI can still be re-saved from this form.
     # [RU] Проверяется по системной базе часовых поясов, а не по COMMON_TIMEZONES,
     # чтобы зону, ранее заданную через CLI, можно было сохранить и из этой формы.
-    if timezone not in available_timezones():
+    if tz_name not in available_timezones():
         flash("Unknown timezone.", "error")
         return redirect(url_for("imports.settings"))
 
     with db.connection() as conn:
-        imports_model.save_schedule(conn, enabled, at_time, timezone,
-                                    current_user()["email"])
+        imports_model.save_timezone(conn, tz_name, current_user()["email"])
 
-    if enabled:
-        flash(f"Schedule saved: daily at {at_time} {timezone}.", "success")
-    else:
-        flash("Schedule disabled. Imports now only run when started by hand.",
-              "success")
+    flash(f"Timezone set to {tz_name}. All times in the app now show in it, and "
+          f"the schedule fires by it.", "success")
     return redirect(url_for("imports.settings"))
 
 

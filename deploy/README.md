@@ -211,7 +211,7 @@ worker dies on boot, `Restart=on-failure` loops, and nginx returns 502.
 
 ## 8. Scheduled loading of new agents (`scripts.run_import` on a schedule)
 
-The timer **no longer owns the time of day**. It polls every 15 minutes and runs
+The timer **no longer owns the time of day**. It polls every minute and runs
 `scripts.run_import --if-due`, which reads the schedule from the database
 (`import_settings`) and does nothing unless the configured slot has arrived. The
 schedule itself — on/off, time, timezone — is set in the app at

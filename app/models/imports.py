@@ -118,16 +118,37 @@ def save_filters(conn, counties: list[str], license_types: list[str], updated_by
         conn.commit()
 
 
-def save_schedule(conn, enabled: bool, at_time: str, timezone: str, updated_by: str) -> None:
+def save_schedule(conn, enabled: bool, at_time: str, updated_by: str) -> None:
+    """[EN] Only the on/off flag and the time. The timezone is app-wide (it also
+    governs how timestamps display) and is saved separately by save_timezone.
+    [RU] Только флаг вкл/выкл и время. Часовой пояс — общий для приложения (он также
+    определяет отображение метк времени) и сохраняется отдельно в save_timezone."""
     with conn.cursor() as cur:
         cur.execute(
             """
             UPDATE import_settings
-            SET schedule_enabled = %s, schedule_time = %s, schedule_timezone = %s,
+            SET schedule_enabled = %s, schedule_time = %s,
                 updated_at = now(), updated_by = %s
             WHERE id = 1;
             """,
-            (enabled, at_time, timezone, updated_by),
+            (enabled, at_time, updated_by),
+        )
+        conn.commit()
+
+
+def save_timezone(conn, tz_name: str, updated_by: str) -> None:
+    """[EN] Sets THE timezone for the whole tool: when the schedule fires and how
+    every timestamp is rendered.
+    [RU] Задаёт ЕДИНЫЙ часовой пояс всего инструмента: когда срабатывает расписание
+    и как отображается каждая метка времени."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE import_settings
+            SET timezone = %s, updated_at = now(), updated_by = %s
+            WHERE id = 1;
+            """,
+            (tz_name, updated_by),
         )
         conn.commit()
 
